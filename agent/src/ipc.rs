@@ -49,6 +49,8 @@ pub enum Response {
     Done { id: String },
     /// An error occurred.
     Error { id: String, message: String },
+    /// Status update (retry, busy, idle).
+    Status { id: String, message: String },
     /// Response to Ping.
     Pong,
 }

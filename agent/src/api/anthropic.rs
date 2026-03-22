@@ -271,16 +271,22 @@ impl Provider for AnthropicProvider {
         // Check for HTTP errors before trying to parse SSE
         let status = response.status();
         if !status.is_success() {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(crate::error::parse_retry_after);
             let body = response.text().await.unwrap_or_default();
-            // Try to parse structured error for a better message
+            let mut classified = crate::error::classify(status.as_u16(), &body);
+            // Improve message if structured error is available
             if let Ok(api_err) = serde_json::from_str::<ApiError>(&body) {
-                anyhow::bail!(
-                    "Anthropic API error {status} ({}): {}",
-                    api_err.error.r#type,
-                    api_err.error.message
+                classified.message = format!(
+                    "Anthropic API error {} ({}): {}",
+                    status, api_err.error.r#type, api_err.error.message
                 );
             }
-            anyhow::bail!("Anthropic API error {status}: {body}");
+            classified.retry_after = retry_after;
+            return Err(classified.into());
         }
 
         let mut sse_rx = sse::parse_stream(response);

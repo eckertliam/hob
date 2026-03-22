@@ -1,5 +1,6 @@
 mod agent;
 mod api;
+mod error;
 mod ipc;
 mod prompt;
 mod tools;

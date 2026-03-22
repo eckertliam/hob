@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::api::{ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest};
+use crate::error::{self, ClassifiedError};
 use crate::ipc;
 use crate::prompt;
 use crate::tools;
@@ -142,7 +143,38 @@ async fn stream_response(
     cancel: &CancellationToken,
     messages: &mut Vec<Message>,
 ) -> Result<Option<StopReason>> {
-    let mut rx = provider.stream(request).await?;
+    // Retry loop for transient API errors
+    let mut attempt = 0u32;
+    let mut rx = loop {
+        match provider.stream(request.clone()).await {
+            Ok(rx) => break rx,
+            Err(e) => {
+                if let Some(ce) = e.downcast_ref::<ClassifiedError>() {
+                    if !error::is_retryable(&ce.kind) {
+                        return Err(e);
+                    }
+                    attempt += 1;
+                    let delay = error::retry_delay(attempt, ce.retry_after);
+                    let secs = delay.as_secs_f64();
+                    info!("task {task_id}: {}, retrying in {secs:.1}s (attempt {attempt})", ce.message);
+                    ipc::send(&ipc::Response::Status {
+                        id: task_id.to_string(),
+                        message: format!("{}, retrying in {secs:.0}s...", ce.message),
+                    })
+                    .await?;
+                    tokio::select! {
+                        _ = tokio::time::sleep(delay) => continue,
+                        _ = cancel.cancelled() => {
+                            send_cancelled(task_id).await?;
+                            return Ok(None);
+                        }
+                    }
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    };
 
     let mut text_parts: HashMap<u32, String> = HashMap::new();
     let mut tool_calls: HashMap<u32, PendingToolCall> = HashMap::new();

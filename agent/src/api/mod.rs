@@ -101,6 +101,7 @@ pub struct ToolDef {
 }
 
 /// Parameters for a streaming request.
+#[derive(Clone)]
 pub struct StreamRequest {
     pub model: String,
     pub system: String,

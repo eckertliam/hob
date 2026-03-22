@@ -56,6 +56,8 @@
            (hob-ui-task-done id))
           ("error"
            (hob-ui-task-error id (alist-get 'message msg)))
+          ("status"
+           (hob-ui-task-status id (alist-get 'message msg)))
           ("pong"
            (message "hob-agent: pong"))
           (_

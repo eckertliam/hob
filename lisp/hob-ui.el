@@ -52,6 +52,10 @@
   "Called when task TASK-ID fails with MESSAGE."
   (hob-ui--buffer-append (format "\n--- Error (%s): %s ---\n" task-id message)))
 
+(defun hob-ui-task-status (task-id message)
+  "Called when task TASK-ID has a status update MESSAGE."
+  (hob-ui--buffer-append (format "\n[status: %s]\n" message)))
+
 (define-derived-mode hob-ui-mode special-mode "Hob"
   "Major mode for the hob agent output buffer."
   (setq buffer-read-only t)
