@@ -1,9 +1,10 @@
 //! Agent loop: orchestrates API calls and tool dispatch.
 
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::api::{self, ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest};
+use crate::api::{ContentBlock, Message, Provider, StreamEvent, StreamRequest};
 use crate::ipc;
 
 /// Build the system prompt with environment context.
@@ -27,6 +28,7 @@ pub async fn run_task(
     model: &str,
     task_id: String,
     prompt: String,
+    cancel: CancellationToken,
 ) -> Result<()> {
     info!("starting task {task_id}");
 
@@ -44,33 +46,46 @@ pub async fn run_task(
 
     let mut rx = provider.stream(request).await?;
 
-    while let Some(event) = rx.recv().await {
-        match event {
-            Ok(StreamEvent::TextDelta { text, .. }) => {
-                ipc::send(&ipc::Response::Token {
-                    id: task_id.clone(),
-                    content: text,
-                })
-                .await?;
-            }
-            Ok(StreamEvent::MessageDelta { stop_reason, .. }) => {
-                if let Some(reason) = stop_reason {
-                    info!("task {task_id} stop_reason: {reason:?}");
-                }
-            }
-            Ok(StreamEvent::MessageStop) => {
-                break;
-            }
-            Ok(_) => {
-                // TextStart, TextStop, Tool* events — ignored for single-turn
-            }
-            Err(e) => {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                info!("task {task_id} cancelled");
                 ipc::send(&ipc::Response::Error {
                     id: task_id.clone(),
-                    message: format!("stream error: {e}"),
+                    message: "cancelled".into(),
                 })
                 .await?;
                 return Ok(());
+            }
+            event = rx.recv() => {
+                match event {
+                    Some(Ok(StreamEvent::TextDelta { text, .. })) => {
+                        ipc::send(&ipc::Response::Token {
+                            id: task_id.clone(),
+                            content: text,
+                        })
+                        .await?;
+                    }
+                    Some(Ok(StreamEvent::MessageDelta { stop_reason, .. })) => {
+                        if let Some(reason) = stop_reason {
+                            info!("task {task_id} stop_reason: {reason:?}");
+                        }
+                    }
+                    Some(Ok(StreamEvent::MessageStop)) | None => {
+                        break;
+                    }
+                    Some(Ok(_)) => {
+                        // TextStart, TextStop, Tool* events — ignored for single-turn
+                    }
+                    Some(Err(e)) => {
+                        ipc::send(&ipc::Response::Error {
+                            id: task_id.clone(),
+                            message: format!("stream error: {e}"),
+                        })
+                        .await?;
+                        return Ok(());
+                    }
+                }
             }
         }
     }

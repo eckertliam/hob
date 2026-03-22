@@ -4,9 +4,14 @@
 //! Incoming (from Emacs): Request
 //! Outgoing (to Emacs): Response
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::api::Provider;
 
@@ -58,11 +63,15 @@ pub async fn send(response: &Response) -> Result<()> {
     Ok(())
 }
 
+/// Tracks in-flight tasks so they can be cancelled.
+type TaskMap = Arc<Mutex<HashMap<String, CancellationToken>>>;
+
 /// Main IPC loop: read requests from stdin, dispatch to agent.
-pub async fn run_loop(provider: &dyn Provider, model: &str) -> Result<()> {
+pub async fn run_loop(provider: Arc<dyn Provider>, model: String) -> Result<()> {
     let stdin = tokio::io::stdin();
     let reader = BufReader::new(stdin);
     let mut lines = reader.lines();
+    let tasks: TaskMap = Arc::new(Mutex::new(HashMap::new()));
 
     while let Some(line) = lines.next_line().await? {
         let line = line.trim().to_string();
@@ -71,7 +80,7 @@ pub async fn run_loop(provider: &dyn Provider, model: &str) -> Result<()> {
         }
         match serde_json::from_str::<Request>(&line) {
             Ok(request) => {
-                handle_request(request, provider, model).await?;
+                handle_request(request, &provider, &model, &tasks).await?;
             }
             Err(e) => {
                 tracing::error!("Failed to parse request: {e}: {line}");
@@ -82,23 +91,46 @@ pub async fn run_loop(provider: &dyn Provider, model: &str) -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(request: Request, provider: &dyn Provider, model: &str) -> Result<()> {
+async fn handle_request(
+    request: Request,
+    provider: &Arc<dyn Provider>,
+    model: &str,
+    tasks: &TaskMap,
+) -> Result<()> {
     match request {
         Request::Ping => {
             send(&Response::Pong).await?;
         }
         Request::Task { id, prompt } => {
-            if let Err(e) = crate::agent::run_task(provider, model, id.clone(), prompt).await {
-                send(&Response::Error {
-                    id,
-                    message: format!("{e:#}"),
-                })
-                .await?;
-            }
+            let cancel = CancellationToken::new();
+            tasks.lock().await.insert(id.clone(), cancel.clone());
+
+            let provider = Arc::clone(provider);
+            let model = model.to_string();
+            let tasks = Arc::clone(tasks);
+            let task_id = id.clone();
+
+            tokio::spawn(async move {
+                let result =
+                    crate::agent::run_task(&*provider, &model, task_id.clone(), prompt, cancel)
+                        .await;
+                if let Err(e) = &result {
+                    let _ = send(&Response::Error {
+                        id: task_id.clone(),
+                        message: format!("{e:#}"),
+                    })
+                    .await;
+                }
+                tasks.lock().await.remove(&task_id);
+            });
         }
         Request::Cancel { id } => {
-            // TODO: cancel in-flight task by id
-            tracing::info!("Cancel requested for task {id}");
+            if let Some(cancel) = tasks.lock().await.get(&id) {
+                tracing::info!("Cancelling task {id}");
+                cancel.cancel();
+            } else {
+                tracing::info!("Cancel requested for unknown task {id}");
+            }
         }
     }
     Ok(())

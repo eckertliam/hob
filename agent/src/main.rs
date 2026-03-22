@@ -3,6 +3,8 @@ mod api;
 mod ipc;
 mod tools;
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use tracing::info;
 
@@ -20,9 +22,10 @@ async fn main() -> Result<()> {
     let model =
         std::env::var("HOB_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
 
-    let provider = api::anthropic::AnthropicProvider::new(api_key);
+    let provider: Arc<dyn api::Provider> =
+        Arc::new(api::anthropic::AnthropicProvider::new(api_key));
 
-    ipc::run_loop(&provider, &model).await?;
+    ipc::run_loop(provider, model).await?;
 
     Ok(())
 }

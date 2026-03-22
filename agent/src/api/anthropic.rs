@@ -4,13 +4,11 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::sse;
-use super::{
-    ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest, ToolDef, Usage,
-};
+use super::{Message, Provider, StopReason, StreamEvent, StreamRequest, ToolDef, Usage};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
@@ -55,19 +53,33 @@ struct ApiTool {
     input_schema: serde_json::Value,
 }
 
+/// Anthropic API error response.
+#[derive(Deserialize)]
+struct ApiError {
+    error: ApiErrorBody,
+}
+
+#[derive(Deserialize)]
+struct ApiErrorBody {
+    r#type: String,
+    message: String,
+}
+
 /// Convert our provider-agnostic messages into Anthropic wire format.
-fn convert_messages(messages: &[Message]) -> Vec<ApiMessage> {
+fn convert_messages(messages: &[Message]) -> Result<Vec<ApiMessage>> {
     messages
         .iter()
         .map(|msg| match msg {
-            Message::User { content } => ApiMessage {
+            Message::User { content } => Ok(ApiMessage {
                 role: "user".into(),
-                content: serde_json::to_value(content).unwrap_or_default(),
-            },
-            Message::Assistant { content } => ApiMessage {
+                content: serde_json::to_value(content)
+                    .context("failed to serialize user message content")?,
+            }),
+            Message::Assistant { content } => Ok(ApiMessage {
                 role: "assistant".into(),
-                content: serde_json::to_value(content).unwrap_or_default(),
-            },
+                content: serde_json::to_value(content)
+                    .context("failed to serialize assistant message content")?,
+            }),
         })
         .collect()
 }
@@ -241,7 +253,7 @@ impl Provider for AnthropicProvider {
             max_tokens: request.max_tokens,
             stream: true,
             system: request.system,
-            messages: convert_messages(&request.messages),
+            messages: convert_messages(&request.messages)?,
             tools: convert_tools(&request.tools),
         };
 
@@ -260,6 +272,14 @@ impl Provider for AnthropicProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            // Try to parse structured error for a better message
+            if let Ok(api_err) = serde_json::from_str::<ApiError>(&body) {
+                anyhow::bail!(
+                    "Anthropic API error {status} ({}): {}",
+                    api_err.error.r#type,
+                    api_err.error.message
+                );
+            }
             anyhow::bail!("Anthropic API error {status}: {body}");
         }
 
