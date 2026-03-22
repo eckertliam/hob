@@ -62,6 +62,11 @@ and confirm all tests pass before considering the work done.
 
 ## Code conventions
 
+**Provider neutrality**: Never hardcode a single LLM provider in defaults, config
+names, or documentation. Abstractions must have at least two implementations to
+be considered complete. When in doubt, use generic names (`HOB_API_KEY`, not
+`ANTHROPIC_API_KEY`).
+
 ### Rust (agent/)
 
 - Rust 2021 edition, stable toolchain.
