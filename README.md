@@ -122,4 +122,4 @@ make clean
 
 ## License
 
-TBD
+MIT
