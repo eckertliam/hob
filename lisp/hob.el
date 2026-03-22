@@ -99,7 +99,9 @@ If nil, uses the default OpenAI API URL."
     (hob-stop))
   (straight-pull-package "hob")
   (straight-rebuild-package "hob")
-  (let ((default-directory (expand-file-name "hob" straight--repos-dir)))
+  (let ((default-directory
+         (expand-file-name "straight/repos/hob/"
+                           user-emacs-directory)))
     (compile "make build")))
 
 (provide 'hob)
