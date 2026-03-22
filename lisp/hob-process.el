@@ -73,14 +73,13 @@ Returns nil if not found."
            :connection-type 'pipe
            :filter #'hob--process-filter
            :sentinel #'hob--process-sentinel
-           :noquery t))))
-  (message "hob-agent started (pid %d)" (process-id hob--process)))
+           :noquery t))
+    (message "hob-agent started (pid %d)" (process-id hob--process))))
 
 (defun hob-process-stop ()
   "Stop the hob-agent subprocess."
-  (when hob--process
-    (when (processp hob--process)
-      (ignore-errors (delete-process hob--process)))
+  (when (hob-process-running-p)
+    (delete-process hob--process)
     (setq hob--process nil)
     (message "hob-agent stopped")))
 

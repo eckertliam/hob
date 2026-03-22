@@ -352,6 +352,82 @@ Returns the environment list that would be prepended."
           (should (string-match-p "streaming" (hob-ui--modeline-string))))
       (kill-buffer buf))))
 
+;; ── Process lifecycle tests ─────────────────────────────────────────
+
+(ert-deftest hob-test-load-process-el-no-side-effects ()
+  "Loading hob-process.el should not call process-id or start anything."
+  ;; Re-load the file — should not throw
+  (let ((hob--process nil))
+    (load (locate-library "hob-process") nil t)
+    (should (null hob--process))))
+
+(ert-deftest hob-test-running-p-nil-process ()
+  "hob-process-running-p returns nil when hob--process is nil."
+  (let ((hob--process nil))
+    (should (null (hob-process-running-p)))))
+
+(ert-deftest hob-test-running-p-dead-process ()
+  "hob-process-running-p returns nil for a dead process."
+  (let ((proc (make-process :name "hob-test-dead"
+                            :command (list "true")
+                            :noquery t)))
+    ;; Wait for it to exit
+    (while (process-live-p proc) (sleep-for 0.05))
+    (let ((hob--process proc))
+      (should (null (hob-process-running-p))))))
+
+(ert-deftest hob-test-running-p-live-process ()
+  "hob-process-running-p returns non-nil for a live process."
+  (let ((proc (make-process :name "hob-test-live"
+                            :command (list "cat")
+                            :connection-type 'pipe
+                            :noquery t)))
+    (unwind-protect
+        (let ((hob--process proc))
+          (should (hob-process-running-p)))
+      (delete-process proc))))
+
+(ert-deftest hob-test-stop-when-nil ()
+  "hob-process-stop does not error when hob--process is nil."
+  (let ((hob--process nil))
+    ;; Should not throw
+    (hob-process-stop)))
+
+(ert-deftest hob-test-stop-when-dead ()
+  "hob-process-stop does not error when process already exited."
+  (let ((proc (make-process :name "hob-test-dead2"
+                            :command (list "true")
+                            :noquery t)))
+    (while (process-live-p proc) (sleep-for 0.05))
+    (let ((hob--process proc))
+      ;; Should not throw
+      (hob-process-stop))))
+
+(ert-deftest hob-test-stop-when-live ()
+  "hob-process-stop kills a live process."
+  (let ((proc (make-process :name "hob-test-stop"
+                            :command (list "cat")
+                            :connection-type 'pipe
+                            :noquery t)))
+    (let ((hob--process proc))
+      (hob-process-stop)
+      (should (null hob--process)))))
+
+(ert-deftest hob-test-send-when-nil-errors ()
+  "hob-process-send errors when no process is running."
+  (let ((hob--process nil))
+    (should-error (hob-process-send "{}"))))
+
+(ert-deftest hob-test-update-no-process-no-error ()
+  "hob-update doesn't error on the stop check when no process exists."
+  (let ((hob--process nil))
+    ;; Mock straight and compile so we only test the stop guard
+    (cl-letf (((symbol-function 'straight-pull-package) #'ignore)
+              ((symbol-function 'straight-rebuild-package) #'ignore)
+              ((symbol-function 'compile) #'ignore))
+      ;; Should not throw
+      (hob-update))))
+
 ;; ── Integration: mock subprocess ───────────────────────────────────
 
 (ert-deftest hob-test-integration-ping-pong ()
