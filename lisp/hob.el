@@ -62,10 +62,13 @@ If nil, uses the default OpenAI API URL."
 
 ;;;###autoload
 (defun hob ()
-  "Open the hob chat buffer."
+  "Open the hob chat buffer in a right side window."
   (interactive)
   (let ((buf (hob-ui--get-or-create-buffer)))
-    (pop-to-buffer buf)
+    (pop-to-buffer buf
+                   '(display-buffer-in-side-window
+                     (side . right)
+                     (window-width . 80)))
     (goto-char (point-max))))
 
 ;;;###autoload
