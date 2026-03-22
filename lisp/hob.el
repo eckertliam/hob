@@ -24,9 +24,14 @@
   :prefix "hob-")
 
 (defcustom hob-agent-binary
-  (expand-file-name
-   "agent/target/release/hob-agent"
-   (file-name-directory (or load-file-name buffer-file-name "")))
+  (let ((dir (file-name-directory (or load-file-name buffer-file-name ""))))
+    (expand-file-name
+     "agent/target/release/hob-agent"
+     ;; straight.el loads from build/ but the binary is in repos/.
+     ;; Try to resolve: if dir contains /straight/build/, swap to repos/.
+     (if (string-match "/straight/build/" dir)
+         (replace-match "/straight/repos/" nil nil dir)
+       dir)))
   "Path to the hob-agent Rust binary."
   :type 'file
   :group 'hob)
