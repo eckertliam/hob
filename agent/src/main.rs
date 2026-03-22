@@ -3,7 +3,7 @@ mod api;
 mod ipc;
 mod tools;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::info;
 
 #[tokio::main]
@@ -15,7 +15,14 @@ async fn main() -> Result<()> {
 
     info!("hob-agent starting");
 
-    ipc::run_loop().await?;
+    let api_key =
+        std::env::var("ANTHROPIC_API_KEY").context("ANTHROPIC_API_KEY not set")?;
+    let model =
+        std::env::var("HOB_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
+
+    let provider = api::anthropic::AnthropicProvider::new(api_key);
+
+    ipc::run_loop(&provider, &model).await?;
 
     Ok(())
 }

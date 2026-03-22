@@ -21,16 +21,19 @@
   (unless (file-executable-p hob-agent-binary)
     (user-error "hob-agent binary not found at %s — run `make build'"
                 hob-agent-binary))
-  (setq hob--process
-        (make-process
-         :name "hob-agent"
-         :buffer nil
-         :command (list hob-agent-binary)
-         :connection-type 'pipe
-         :filter #'hob--process-filter
-         :sentinel #'hob--process-sentinel
-         :noquery t
-         :env (list (concat "ANTHROPIC_API_KEY=" hob-api-key))))
+  (let ((process-environment
+         (append (list (concat "ANTHROPIC_API_KEY=" hob-api-key)
+                       (concat "HOB_MODEL=" hob-model))
+                 process-environment)))
+    (setq hob--process
+          (make-process
+           :name "hob-agent"
+           :buffer nil
+           :command (list hob-agent-binary)
+           :connection-type 'pipe
+           :filter #'hob--process-filter
+           :sentinel #'hob--process-sentinel
+           :noquery t)))
   (message "hob-agent started (pid %d)" (process-id hob--process)))
 
 (defun hob-process-stop ()

@@ -8,6 +8,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use crate::api::Provider;
+
 /// Messages received from Emacs.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -27,9 +29,17 @@ pub enum Response {
     /// Streaming token from the model.
     Token { id: String, content: String },
     /// A tool is being invoked.
-    ToolCall { id: String, tool: String, input: serde_json::Value },
+    ToolCall {
+        id: String,
+        tool: String,
+        input: serde_json::Value,
+    },
     /// A tool has completed.
-    ToolResult { id: String, tool: String, output: String },
+    ToolResult {
+        id: String,
+        tool: String,
+        output: String,
+    },
     /// Task completed successfully.
     Done { id: String },
     /// An error occurred.
@@ -49,7 +59,7 @@ pub async fn send(response: &Response) -> Result<()> {
 }
 
 /// Main IPC loop: read requests from stdin, dispatch to agent.
-pub async fn run_loop() -> Result<()> {
+pub async fn run_loop(provider: &dyn Provider, model: &str) -> Result<()> {
     let stdin = tokio::io::stdin();
     let reader = BufReader::new(stdin);
     let mut lines = reader.lines();
@@ -61,7 +71,7 @@ pub async fn run_loop() -> Result<()> {
         }
         match serde_json::from_str::<Request>(&line) {
             Ok(request) => {
-                handle_request(request).await?;
+                handle_request(request, provider, model).await?;
             }
             Err(e) => {
                 tracing::error!("Failed to parse request: {e}: {line}");
@@ -72,18 +82,19 @@ pub async fn run_loop() -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(request: Request) -> Result<()> {
+async fn handle_request(request: Request, provider: &dyn Provider, model: &str) -> Result<()> {
     match request {
         Request::Ping => {
             send(&Response::Pong).await?;
         }
-        Request::Task { id, prompt: _ } => {
-            // TODO: delegate to agent::run_task(id, prompt)
-            send(&Response::Error {
-                id,
-                message: "not implemented".into(),
-            })
-            .await?;
+        Request::Task { id, prompt } => {
+            if let Err(e) = crate::agent::run_task(provider, model, id.clone(), prompt).await {
+                send(&Response::Error {
+                    id,
+                    message: format!("{e:#}"),
+                })
+                .await?;
+            }
         }
         Request::Cancel { id } => {
             // TODO: cancel in-flight task by id

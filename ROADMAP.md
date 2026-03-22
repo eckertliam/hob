@@ -6,17 +6,20 @@ previous.
 
 ## Phase 1: Single-turn streaming
 
-The minimum to see something work. Implement the Anthropic SSE streaming client
-in `api.rs`, wire it into the agent loop for one LLM call, and stream tokens
+The minimum to see something work. Provider abstraction layer with Anthropic
+SSE streaming, wired into the agent loop for one LLM call, streaming tokens
 back to Emacs over IPC. No tools, no storage, no permissions. Messages live in
 memory. At the end of this phase: `M-x hob-task`, type a question, see a
 streaming response in the `*hob*` buffer.
 
-- [ ] Anthropic Messages API client with SSE streaming
-- [ ] Parse `content_block_delta` events for text tokens
-- [ ] Agent loop: single-turn (call LLM once, stream tokens, done)
-- [ ] IPC: send `token` messages as they arrive, `done` when finished
-- [ ] Basic system prompt (model identity, working directory, date)
+- [x] Provider abstraction (`api/mod.rs`): `StreamEvent` enum, `Provider` trait
+- [x] SSE parser (`api/sse.rs`): shared between providers
+- [x] Anthropic provider (`api/anthropic.rs`): SSE → StreamEvent translation
+- [x] Parse `content_block_delta` events for text and tool input
+- [x] Agent loop: single-turn (call LLM once, stream tokens, done)
+- [x] IPC: send `token` messages as they arrive, `done` when finished
+- [x] Basic system prompt (working directory, platform)
+- [x] Emacs passes `ANTHROPIC_API_KEY` and `HOB_MODEL` via process environment
 
 ## Phase 2: Tool loop
 
