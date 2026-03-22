@@ -67,12 +67,13 @@ Returns nil if not found."
           (make-process
            :name "hob-agent"
            :buffer nil
-           :command (list hob-agent-binary)
+           :command (list "sh" "-c"
+                          (concat (shell-quote-argument hob-agent-binary)
+                                  " 2>/tmp/hob-stderr.log"))
            :connection-type 'pipe
            :filter #'hob--process-filter
            :sentinel #'hob--process-sentinel
-           :noquery t
-           :stderr (get-buffer-create " *hob-stderr*"))))
+           :noquery t))))
   (message "hob-agent started (pid %d)" (process-id hob--process)))
 
 (defun hob-process-stop ()
