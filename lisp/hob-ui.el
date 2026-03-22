@@ -201,9 +201,9 @@ Used to apply markdown rendering when the response completes.")
     ;; Bold **text** and __text__
     (hob-ui--md-render-pattern "\\*\\*\\(.+?\\)\\*\\*" 'hob-md-bold-face)
     (hob-ui--md-render-pattern "__\\(.+?\\)__" 'hob-md-bold-face)
-    ;; Italic *text* and _text_ (but not inside code or **)
-    (hob-ui--md-render-pattern "\\(?:^\\|[^*_]\\)\\*\\([^*\n]+?\\)\\*\\(?:[^*]\\|$\\)"
-                               'hob-md-italic-face)
+    ;; Italic *text* (but not inside code or **)
+    (hob-ui--md-render-pattern "\\(?:^\\|[[:space:]]\\)\\*\\([^*\n]+?\\)\\*\\(?:[^*]\\|$\\)"
+                               'hob-md-italic-face 'italic-context)
     ;; Inline code `text`
     (hob-ui--md-render-inline-code)
     (buffer-string)))
@@ -268,7 +268,7 @@ Used to apply markdown rendering when the response completes.")
 (defun hob-ui--md-render-headings ()
   "Render # headings with heading face."
   (goto-char (point-min))
-  (while (re-search-forward "^\\(#{1,4}\\) \\(.*\\)$" nil t)
+  (while (re-search-forward "^\\(#\\{1,4\\}\\) \\(.*\\)$" nil t)
     (unless (get-text-property (match-beginning 0) 'hob-code-block)
       (let ((heading (match-string 2))
             (start (match-beginning 0))
@@ -277,15 +277,27 @@ Used to apply markdown rendering when the response completes.")
         (goto-char start)
         (insert (propertize heading 'face 'hob-md-heading-face))))))
 
-(defun hob-ui--md-render-pattern (pattern face)
-  "Apply FACE to text matching PATTERN (group 1 is the content)."
+(defun hob-ui--md-render-pattern (pattern face &optional context-aware)
+  "Apply FACE to text matching PATTERN (group 1 is the content).
+When CONTEXT-AWARE is non-nil, only replace from group 1's delimiters,
+preserving any leading/trailing context characters in the match."
   (goto-char (point-min))
   (while (re-search-forward pattern nil t)
     (unless (get-text-property (match-beginning 0) 'hob-code-block)
       (let ((content (match-string 1))
-            (start (match-beginning 0))
-            (end (match-end 0)))
-        ;; Only replace the matched delimiters, keep surrounding text
+            (start (if context-aware (match-beginning 1) (match-beginning 0)))
+            (end (if context-aware (match-end 1) (match-end 0))))
+        ;; Expand to include the delimiters around group 1
+        ;; For italic: the * before group 1 start and * after group 1 end
+        (when context-aware
+          (setq start (save-excursion
+                        (goto-char start)
+                        (skip-chars-backward "*_")
+                        (point)))
+          (setq end (save-excursion
+                      (goto-char end)
+                      (skip-chars-forward "*_")
+                      (point))))
         (delete-region start end)
         (goto-char start)
         (insert (propertize content 'face face))))))
@@ -484,8 +496,7 @@ TAB on the header line toggles visibility."
   "Replace the raw streamed text with markdown-rendered version.
 Called when streaming pauses (tool call) or ends (done/error)."
   (with-current-buffer (hob-ui--get-or-create-buffer)
-    (when (and (not (string-empty-p hob--streaming-text))
-               (> (length hob--streaming-text) 0))
+    (when (not (string-empty-p hob--streaming-text))
       (let ((text hob--streaming-text)
             (inhibit-read-only t))
         (setq hob--streaming-text "")
@@ -526,16 +537,16 @@ Called when streaming pauses (tool call) or ends (done/error)."
   (let ((input (hob-ui--input-text)))
     (when (string-empty-p input)
       (user-error "Nothing to send"))
-    ;; Save to history
+    ;; Start agent if needed and send
+    (unless (hob-process-running-p)
+      (hob-process-start))
+    (hob-ipc-send-task input)
+    ;; Only clear input and save history after successful send
     (with-current-buffer (hob-ui--get-or-create-buffer)
       (push input hob--input-history)
       (setq hob--input-history-index -1)
       (setq hob--following t))
-    (hob-ui--clear-input)
-    ;; Start agent if needed and send
-    (unless (hob-process-running-p)
-      (hob-process-start))
-    (hob-ipc-send-task input)))
+    (hob-ui--clear-input)))
 
 (defun hob-ui-cancel ()
   "Cancel the current task."
@@ -550,8 +561,9 @@ Called when streaming pauses (tool call) or ends (done/error)."
 (defun hob-ui-new-chat ()
   "Clear the chat and start fresh."
   (interactive)
-  (when (and hob--current-task-id
-             (yes-or-no-p "Task running.  Cancel and start new chat? "))
+  (when hob--current-task-id
+    (unless (yes-or-no-p "Task running.  Cancel and start new chat? ")
+      (user-error "Aborted"))
     (hob-ipc-send-cancel hob--current-task-id))
   (with-current-buffer (hob-ui--get-or-create-buffer)
     (let ((inhibit-read-only t))

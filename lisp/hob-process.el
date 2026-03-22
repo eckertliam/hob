@@ -8,6 +8,12 @@
 
 (require 'json)
 
+;; Forward declarations — hob-ui.el loads after us, avoid circular require.
+(defvar hob--buffer-name)
+(defvar hob--current-task-id)
+(declare-function hob-ui-task-error "hob-ui")
+(declare-function hob-ui--set-status "hob-ui")
+
 (defvar hob--process nil
   "The hob-agent subprocess, or nil if not running.")
 
@@ -41,6 +47,7 @@ Returns nil if not found."
   (unless (file-executable-p hob-agent-binary)
     (user-error "hob-agent binary not found at %s — run `make build'"
                 hob-agent-binary))
+  (setq hob--output-buffer "")
   ;; On macOS, GUI Emacs doesn't inherit shell env vars.
   ;; If we can't find the API key, ask the user's login shell for it.
   (let* ((api-key (or hob-api-key
@@ -107,7 +114,16 @@ Returns nil if not found."
   "Handle subprocess PROCESS lifecycle EVENT."
   (message "hob-agent: %s" (string-trim event))
   (unless (process-live-p process)
-    (setq hob--process nil)))
+    (setq hob--process nil)
+    (setq hob--output-buffer "")
+    ;; Update UI if the buffer exists — reset status and notify about
+    ;; any in-progress task that was lost.
+    (when-let ((buf (get-buffer hob--buffer-name)))
+      (with-current-buffer buf
+        (when hob--current-task-id
+          (hob-ui-task-error hob--current-task-id
+                             (format "agent exited: %s" (string-trim event))))
+        (hob-ui--set-status "idle")))))
 
 (provide 'hob-process)
 ;;; hob-process.el ends here

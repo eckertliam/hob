@@ -7,6 +7,7 @@
 ;;; Code:
 
 (require 'json)
+(require 'cl-lib)
 (require 'hob-process)
 
 (defvar hob--task-counter 0
