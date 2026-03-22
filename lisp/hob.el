@@ -61,6 +61,14 @@ If nil, uses the default OpenAI API URL."
   :group 'hob)
 
 ;;;###autoload
+(defun hob ()
+  "Open the hob chat buffer."
+  (interactive)
+  (let ((buf (hob-ui--get-or-create-buffer)))
+    (pop-to-buffer buf)
+    (goto-char (point-max))))
+
+;;;###autoload
 (defun hob-start ()
   "Start the hob agent subprocess."
   (interactive)

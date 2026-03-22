@@ -80,14 +80,27 @@ to override.
 
 ## Usage
 
-```
-M-x hob-task    — send a prompt to the agent (starts the subprocess if needed)
-M-x hob-start   — start the agent subprocess
-M-x hob-stop    — stop the agent subprocess
-```
+`M-x hob` opens the chat buffer. Type in the input area at the bottom and
+press `RET` to send.
+
+| Key | Action |
+|-----|--------|
+| `RET` | Send input |
+| `S-RET` / `C-j` | Insert newline in input |
+| `C-c C-k` | Cancel running task |
+| `C-c C-n` | New chat (clear history) |
+| `M-p` / `M-n` | Browse input history |
 
 When a tool requires permission (shell commands, file writes), you'll be
 prompted: `y` to allow once, `!` to allow for the session, `n` to deny.
+
+Other commands:
+
+```
+M-x hob-start   — start the agent subprocess manually
+M-x hob-stop    — stop the agent subprocess
+M-x hob-task    — send a prompt without the chat UI
+```
 
 ## Model selection
 
