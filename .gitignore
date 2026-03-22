@@ -1,0 +1,12 @@
+# Rust
+agent/target/
+
+# Elisp
+lisp/*.elc
+*.elc
+
+# Editor
+.DS_Store
+*~
+\#*\#
+.\#*
