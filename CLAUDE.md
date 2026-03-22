@@ -22,6 +22,45 @@ cargo check --manifest-path agent/Cargo.toml  # type-check without full build
 cargo test --manifest-path agent/Cargo.toml   # run rust tests
 ```
 
+## Testing requirements
+
+**Every code change must include tests.** This is mandatory, not optional.
+
+### When to write tests
+
+- **New functions/methods**: Add unit tests covering the happy path and at least
+  one error/edge case.
+- **Bug fixes**: Add a regression test that fails without the fix and passes
+  with it.
+- **New tools**: Add tests for `definition()` (schema is valid) and `execute()`
+  (correct output for valid input, proper error for invalid input).
+- **IPC message types**: Add round-trip serde tests (serialize → deserialize →
+  assert equality).
+- **Refactors**: Existing tests must still pass. If you change a public API,
+  update its tests to match.
+
+### Where tests live
+
+- Rust unit tests go in a `#[cfg(test)] mod tests` block at the bottom of the
+  file being tested. This is the standard Rust convention — do not create
+  separate test files for unit tests.
+- Integration tests (if needed) go in `agent/tests/`.
+
+### How to write good tests
+
+- Test behavior, not implementation. Assert on outputs and side effects, not
+  internal state.
+- Use descriptive test names: `test_read_file_returns_error_for_missing_path`,
+  not `test1`.
+- Keep tests focused — one logical assertion per test.
+- Do not skip writing tests because the code "seems simple." If it can break, it
+  needs a test.
+
+### Running tests
+
+Always run `cargo test --manifest-path agent/Cargo.toml` after making changes
+and confirm all tests pass before considering the work done.
+
 ## Code conventions
 
 ### Rust (agent/)
