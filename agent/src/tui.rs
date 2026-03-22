@@ -589,14 +589,48 @@ async fn run_ui_loop(
                         app.scroll_to_bottom(h);
                     }
                 }
-                UiEvent::ToolCall { tool, .. } => {
-                    app.chat.push(ChatLine::ToolCall(tool.clone()));
+                UiEvent::ToolCall { tool, input, .. } => {
+                    // Extract a readable summary from tool input
+                    let detail = match tool.as_str() {
+                        "read_file" | "write_file" | "edit_file" | "list_files" => {
+                            input.get("path").and_then(|v| v.as_str())
+                                .unwrap_or("").to_string()
+                        }
+                        "shell" => {
+                            input.get("command").and_then(|v| v.as_str())
+                                .unwrap_or("").to_string()
+                        }
+                        "glob" => {
+                            input.get("pattern").and_then(|v| v.as_str())
+                                .unwrap_or("").to_string()
+                        }
+                        "grep" => {
+                            input.get("pattern").and_then(|v| v.as_str())
+                                .unwrap_or("").to_string()
+                        }
+                        _ => String::new(),
+                    };
+                    let label = if detail.is_empty() {
+                        tool.clone()
+                    } else {
+                        format!("{tool} {detail}")
+                    };
+                    app.chat.push(ChatLine::ToolCall(label));
                     app.status = format!("tool:{tool}");
                 }
                 UiEvent::ToolResult {
                     output, is_error, ..
                 } => {
-                    let short = if output.len() > 100 {
+                    let line_count = output.lines().count();
+                    let short = if is_error {
+                        output.lines().next().unwrap_or("error").to_string()
+                    } else if line_count > 1 {
+                        format!(
+                            "{} ({} lines)",
+                            output.lines().next().unwrap_or(""),
+                            line_count
+                        )
+                    } else if output.len() > 100 {
                         format!("{}...", &output[..100])
                     } else {
                         output
