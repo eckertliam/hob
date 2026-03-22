@@ -1,10 +1,10 @@
 ;;; hob.el --- Native Emacs AI coding agent -*- lexical-binding: t -*-
 
-;; Author: Your Name <you@example.com>
+;; Author: Liam Eckert
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: ai, tools, coding
-;; URL: https://github.com/YOURUSERNAME/hob
+;; URL: https://github.com/eckertliam/hob
 
 ;;; Commentary:
 ;; hob is a native Emacs AI coding agent.
@@ -31,15 +31,33 @@
   :type 'file
   :group 'hob)
 
-(defcustom hob-api-key
-  (or (getenv "ANTHROPIC_API_KEY") "")
-  "Anthropic API key. Defaults to ANTHROPIC_API_KEY env var."
+(defcustom hob-provider nil
+  "LLM provider to use. nil means auto-detect from available API keys.
+Set to \"anthropic\" or \"openai\" to force a provider."
+  :type '(choice (const :tag "Auto-detect" nil)
+                 (const :tag "Anthropic" "anthropic")
+                 (const :tag "OpenAI" "openai"))
+  :group 'hob)
+
+(defcustom hob-api-key nil
+  "API key for the selected provider.
+If nil, the agent reads from ANTHROPIC_API_KEY or OPENAI_API_KEY env vars."
+  :type '(choice (const :tag "Use environment variable" nil)
+                 (string :tag "API key"))
+  :group 'hob)
+
+(defcustom hob-model "claude-sonnet-4-20250514"
+  "Model to use. Examples:
+  Anthropic: claude-sonnet-4-20250514, claude-opus-4-20250514
+  OpenAI:    gpt-4o, gpt-4o-mini"
   :type 'string
   :group 'hob)
 
-(defcustom hob-model "claude-opus-4-5"
-  "Anthropic model to use."
-  :type 'string
+(defcustom hob-openai-base-url nil
+  "Custom base URL for OpenAI-compatible APIs (e.g. local LLM servers).
+If nil, uses the default OpenAI API URL."
+  :type '(choice (const :tag "Default" nil)
+                 (string :tag "Base URL"))
   :group 'hob)
 
 ;;;###autoload

@@ -7,7 +7,7 @@ a multi-turn agent loop over newline-delimited JSON on stdin/stdout.
 
 - Emacs 29.1+
 - Rust toolchain (for building the agent binary)
-- An Anthropic API key
+- An API key from Anthropic or OpenAI
 
 ## Installation
 
@@ -37,21 +37,46 @@ Then add to your Emacs config:
 
 ## API key setup
 
-hob needs an Anthropic API key. Set it one of two ways:
+hob auto-detects your provider from whichever API key is set. Set one:
 
-**Environment variable** (recommended):
+**Anthropic:**
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-**Elisp variable**:
+**OpenAI:**
 
-```elisp
-(setq hob-api-key "sk-ant-...")
+```bash
+export OPENAI_API_KEY="sk-..."
 ```
 
-If both are set, the Elisp variable takes precedence.
+Or set the key in Elisp (provider is auto-detected from the model name, or
+you can set it explicitly):
+
+```elisp
+;; Anthropic
+(setq hob-api-key "sk-ant-..."
+      hob-model "claude-sonnet-4-20250514")
+
+;; OpenAI
+(setq hob-provider "openai"
+      hob-api-key "sk-..."
+      hob-model "gpt-4o")
+```
+
+**OpenAI-compatible APIs** (Ollama, vLLM, etc.):
+
+```elisp
+(setq hob-provider "openai"
+      hob-api-key "sk-..."
+      hob-model "my-model"
+      hob-openai-base-url "http://localhost:11434")
+```
+
+If both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are set, Anthropic is used
+by default. Set `HOB_PROVIDER=openai` (env var) or `hob-provider` (Elisp)
+to override.
 
 ## Usage
 
@@ -66,10 +91,16 @@ prompted: `y` to allow once, `!` to allow for the session, `n` to deny.
 
 ## Model selection
 
-The default model is `claude-sonnet-4-20250514`. To change it:
+The default model is `claude-sonnet-4-20250514`. Some options:
 
 ```elisp
+;; Anthropic
+(setq hob-model "claude-sonnet-4-20250514")  ; default
 (setq hob-model "claude-opus-4-20250514")
+
+;; OpenAI
+(setq hob-model "gpt-4o")
+(setq hob-model "gpt-4o-mini")
 ```
 
 ## Architecture
@@ -90,7 +121,7 @@ The default model is `claude-sonnet-4-20250514`. To change it:
 │              hob-agent (agent/)                  │
 │                                                  │
 │  agent.rs      – multi-turn tool loop            │
-│  api/          – provider abstraction + Anthropic │
+│  api/          – provider abstraction (Anthropic + OpenAI) │
 │  tools/        – read, write, edit, shell, etc.  │
 │  permission.rs – wildcard rules, async ask flow  │
 │  compaction.rs – prune + summarize               │

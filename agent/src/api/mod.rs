@@ -5,6 +5,7 @@
 //! into a common `StreamEvent` enum.
 
 pub mod anthropic;
+pub mod openai;
 pub mod sse;
 
 use anyhow::Result;
