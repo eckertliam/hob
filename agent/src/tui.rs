@@ -746,6 +746,18 @@ async fn run_ui_loop(
     }
 }
 
+fn git_branch() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() { None } else { Some(branch) }
+}
+
 fn format_tokens(n: u32) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
@@ -841,7 +853,8 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
         } else {
             String::new()
         };
-        format!(" hob:{}  model:{}{}  /help ", app.status, app.model, tokens)
+        let branch = git_branch().map(|b| format!("  git:{b}")).unwrap_or_default();
+        format!(" hob:{}  model:{}{}{branch}  /help ", app.status, app.model, tokens)
     };
     let status_style = match app.status.as_str() {
         "idle" => Style::default().fg(Color::DarkGray).bg(Color::Black),
