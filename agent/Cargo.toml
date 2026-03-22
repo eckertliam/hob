@@ -22,3 +22,4 @@ tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
 http = "1"
+tempfile = "3"

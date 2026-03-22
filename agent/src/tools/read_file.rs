@@ -83,3 +83,67 @@ pub async fn execute(input: Value) -> Result<String> {
 
     Ok(output)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn temp_file(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f
+    }
+
+    #[tokio::test]
+    async fn test_read_whole_file() {
+        let f = temp_file("line1\nline2\nline3\n");
+        let result = execute(json!({"path": f.path().to_str().unwrap()}))
+            .await
+            .unwrap();
+        assert!(result.contains("line1"));
+        assert!(result.contains("line2"));
+        assert!(result.contains("line3"));
+        // Check line numbers
+        assert!(result.contains("     1\t"));
+        assert!(result.contains("     2\t"));
+        assert!(result.contains("     3\t"));
+    }
+
+    #[tokio::test]
+    async fn test_read_with_offset_and_limit() {
+        let content = (1..=10).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let f = temp_file(&content);
+        let result = execute(json!({
+            "path": f.path().to_str().unwrap(),
+            "offset": 3,
+            "limit": 2
+        }))
+        .await
+        .unwrap();
+        assert!(result.contains("line3"));
+        assert!(result.contains("line4"));
+        assert!(!result.contains("line2"));
+        assert!(!result.contains("line5"));
+        assert!(result.contains("[showing lines 3-4 of 10]"));
+    }
+
+    #[tokio::test]
+    async fn test_read_nonexistent_file() {
+        let result = execute(json!({"path": "/tmp/hob_nonexistent_file_test"})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_long_lines_truncated() {
+        let long_line = "x".repeat(3000);
+        let f = temp_file(&long_line);
+        let result = execute(json!({"path": f.path().to_str().unwrap()}))
+            .await
+            .unwrap();
+        // Should be truncated with ...
+        assert!(result.contains("..."));
+        assert!(result.len() < 3000 + 100); // line number overhead
+    }
+}

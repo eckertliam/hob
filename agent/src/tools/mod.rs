@@ -57,3 +57,42 @@ fn truncate_output(output: String) -> String {
         cut
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_no_op_when_small() {
+        let s = "hello world".to_string();
+        assert_eq!(truncate_output(s.clone()), s);
+    }
+
+    #[test]
+    fn test_truncate_large_output() {
+        let line = "x".repeat(1000) + "\n";
+        // ~1001 bytes per line, need >50KB = >51 lines
+        let output: String = line.repeat(60);
+        assert!(output.len() > MAX_OUTPUT_BYTES);
+        let result = truncate_output(output.clone());
+        assert!(result.len() < output.len());
+        assert!(result.contains("[output truncated:"));
+    }
+
+    #[test]
+    fn test_definitions_returns_all_tools() {
+        let defs = definitions();
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"shell"));
+        assert!(names.contains(&"list_files"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_unknown_tool() {
+        let cancel = CancellationToken::new();
+        let result = execute("nonexistent", serde_json::json!({}), &cancel).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unknown tool"));
+    }
+}

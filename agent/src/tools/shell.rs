@@ -107,3 +107,66 @@ pub async fn execute(input: Value, cancel: &CancellationToken) -> Result<String>
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_simple_command() {
+        let cancel = CancellationToken::new();
+        let result = execute(json!({"command": "echo hello"}), &cancel)
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_stderr_output() {
+        let cancel = CancellationToken::new();
+        let result = execute(json!({"command": "echo err >&2"}), &cancel)
+            .await
+            .unwrap();
+        assert!(result.contains("[stderr]"));
+        assert!(result.contains("err"));
+    }
+
+    #[tokio::test]
+    async fn test_nonzero_exit_code() {
+        let cancel = CancellationToken::new();
+        let result = execute(json!({"command": "exit 42"}), &cancel)
+            .await
+            .unwrap();
+        assert!(result.contains("[exit code: 42]"));
+    }
+
+    #[tokio::test]
+    async fn test_timeout() {
+        let cancel = CancellationToken::new();
+        let result = execute(
+            json!({"command": "sleep 10", "timeout": 100}),
+            &cancel,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn test_cancel() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = execute(json!({"command": "sleep 10"}), &cancel).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+    }
+
+    #[tokio::test]
+    async fn test_no_output() {
+        let cancel = CancellationToken::new();
+        let result = execute(json!({"command": "true"}), &cancel)
+            .await
+            .unwrap();
+        assert_eq!(result, "[no output]");
+    }
+}
