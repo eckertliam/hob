@@ -3,6 +3,7 @@ mod api;
 mod error;
 mod ipc;
 mod prompt;
+mod store;
 mod tools;
 
 use std::sync::Arc;
@@ -27,7 +28,12 @@ async fn main() -> Result<()> {
     let provider: Arc<dyn api::Provider> =
         Arc::new(api::anthropic::AnthropicProvider::new(api_key));
 
-    ipc::run_loop(provider, model).await?;
+    let db_path = store::Store::default_path();
+    let store = store::Store::open(&db_path)
+        .with_context(|| format!("failed to open store at {}", db_path.display()))?;
+    info!("store opened at {}", db_path.display());
+
+    ipc::run_loop(provider, model, store).await?;
 
     Ok(())
 }

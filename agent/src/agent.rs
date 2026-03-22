@@ -13,6 +13,7 @@ use crate::api::{ContentBlock, Message, Provider, StopReason, StreamEvent, Strea
 use crate::error::{self, ClassifiedError};
 use crate::ipc;
 use crate::prompt;
+use crate::store::Store;
 use crate::tools;
 
 /// A tool call being accumulated from the stream.
@@ -36,8 +37,17 @@ pub async fn run_task(
     task_id: String,
     prompt: String,
     cancel: CancellationToken,
+    store: &Store,
 ) -> Result<()> {
     info!("starting task {task_id}");
+
+    // Create session for persistence
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    if let Err(e) = store.create_session(&task_id, &cwd).await {
+        tracing::warn!("failed to create session: {e}");
+    }
 
     let system = prompt::build_system_prompt(model);
     let tool_defs = tools::definitions();
@@ -121,6 +131,11 @@ pub async fn run_task(
                 break;
             }
         }
+    }
+
+    // Persist messages before signaling completion
+    if let Err(e) = store.save_messages(&task_id, &messages).await {
+        tracing::warn!("failed to save messages: {e}");
     }
 
     ipc::send(&ipc::Response::Done {

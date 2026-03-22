@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Provider;
+use crate::store::Store;
 
 /// Messages received from Emacs.
 #[derive(Debug, Deserialize)]
@@ -69,7 +70,7 @@ pub async fn send(response: &Response) -> Result<()> {
 type TaskMap = Arc<Mutex<HashMap<String, CancellationToken>>>;
 
 /// Main IPC loop: read requests from stdin, dispatch to agent.
-pub async fn run_loop(provider: Arc<dyn Provider>, model: String) -> Result<()> {
+pub async fn run_loop(provider: Arc<dyn Provider>, model: String, store: Store) -> Result<()> {
     let stdin = tokio::io::stdin();
     let reader = BufReader::new(stdin);
     let mut lines = reader.lines();
@@ -82,7 +83,7 @@ pub async fn run_loop(provider: Arc<dyn Provider>, model: String) -> Result<()> 
         }
         match serde_json::from_str::<Request>(&line) {
             Ok(request) => {
-                handle_request(request, &provider, &model, &tasks).await?;
+                handle_request(request, &provider, &model, &tasks, &store).await?;
             }
             Err(e) => {
                 tracing::error!("Failed to parse request: {e}: {line}");
@@ -98,6 +99,7 @@ async fn handle_request(
     provider: &Arc<dyn Provider>,
     model: &str,
     tasks: &TaskMap,
+    store: &Store,
 ) -> Result<()> {
     match request {
         Request::Ping => {
@@ -110,11 +112,12 @@ async fn handle_request(
             let provider = Arc::clone(provider);
             let model = model.to_string();
             let tasks = Arc::clone(tasks);
+            let store = store.clone();
             let task_id = id.clone();
 
             tokio::spawn(async move {
                 let result =
-                    crate::agent::run_task(&*provider, &model, task_id.clone(), prompt, cancel)
+                    crate::agent::run_task(&*provider, &model, task_id.clone(), prompt, cancel, &store)
                         .await;
                 if let Err(e) = &result {
                     let _ = send(&Response::Error {
