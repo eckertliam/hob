@@ -19,15 +19,22 @@ make install  # copies to ~/.local/bin/
 
 ## API key setup
 
-Set one:
+Add one of these to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
+
+**Anthropic:**
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-# or
+```
+
+**OpenAI:**
+
+```bash
 export OPENAI_API_KEY="sk-..."
 ```
 
-Auto-detects provider from whichever key is set. Force with `HOB_PROVIDER=openai` or `HOB_PROVIDER=anthropic`.
+hob auto-detects the provider from whichever key is set. If both are set,
+Anthropic is used by default. Override with `export HOB_PROVIDER=openai`.
 
 **OpenAI-compatible APIs** (Ollama, vLLM, etc.):
 
@@ -57,9 +64,32 @@ When a tool needs permission, you'll see a prompt:
 
 ## Model selection
 
+Default is `claude-sonnet-4-6`. Set `HOB_MODEL` to override:
+
 ```bash
-export HOB_MODEL="claude-sonnet-4-20250514"  # default
-export HOB_MODEL="gpt-4o"
+# Anthropic
+export HOB_MODEL="claude-sonnet-4-6"          # default
+export HOB_MODEL="claude-opus-4-6"            # most capable
+export HOB_MODEL="claude-haiku-4-5-20251001"  # fastest
+
+# OpenAI
+export HOB_MODEL="gpt-5.4"
+export HOB_MODEL="gpt-5.4-mini"
+export HOB_MODEL="gpt-5.3-codex"              # coding-optimized
+```
+
+## Development
+
+```bash
+git clone https://github.com/eckertliam/hob.git
+cd hob
+cargo run --release --manifest-path agent/Cargo.toml
+```
+
+Tests:
+
+```bash
+cargo test --manifest-path agent/Cargo.toml
 ```
 
 ## Project instructions

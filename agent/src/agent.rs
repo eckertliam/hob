@@ -65,7 +65,7 @@ pub async fn run_task(
             system: system.clone(),
             messages: messages.clone(),
             tools: tool_defs.clone(),
-            max_tokens: 16384,
+            max_tokens: crate::models::max_output(model),
         };
 
         let (stop_reason, usage) = stream_response(

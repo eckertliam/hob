@@ -1,8 +1,10 @@
 mod agent;
 mod api;
 mod compaction;
+mod config;
 mod error;
 mod events;
+mod models;
 mod permission;
 mod prompt;
 mod store;
@@ -28,10 +30,10 @@ async fn main() -> Result<()> {
 
     info!("hob starting");
 
-    let model =
-        std::env::var("HOB_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
+    let cfg = config::Config::load().unwrap_or_default();
+    let model = cfg.resolve_model();
 
-    let provider: Arc<dyn api::Provider> = match detect_provider()? {
+    let provider: Arc<dyn api::Provider> = match build_provider(&cfg)? {
         ProviderKind::Anthropic(key) => {
             info!("using Anthropic provider");
             Arc::new(api::anthropic::AnthropicProvider::new(key))
@@ -61,35 +63,42 @@ enum ProviderKind {
     OpenAI(String, Option<String>),
 }
 
-fn detect_provider() -> Result<ProviderKind> {
-    let forced = std::env::var("HOB_PROVIDER").ok();
+fn build_provider(cfg: &config::Config) -> Result<ProviderKind> {
+    let forced = cfg.resolve_provider();
+    let base_url = cfg.resolve_base_url();
 
     match forced.as_deref() {
         Some("openai") => {
-            let key = std::env::var("OPENAI_API_KEY")
-                .context("HOB_PROVIDER=openai but OPENAI_API_KEY not set")?;
-            let base_url = std::env::var("OPENAI_API_BASE").ok();
+            let key = cfg
+                .resolve_api_key("openai")
+                .context("Provider is openai but no OPENAI_API_KEY set.\nRun: /key openai <your-key>")?;
             Ok(ProviderKind::OpenAI(key, base_url))
         }
         Some("anthropic") => {
-            let key = std::env::var("ANTHROPIC_API_KEY")
-                .context("HOB_PROVIDER=anthropic but ANTHROPIC_API_KEY not set")?;
+            let key = cfg
+                .resolve_api_key("anthropic")
+                .context("Provider is anthropic but no ANTHROPIC_API_KEY set.\nRun: /key anthropic <your-key>")?;
             Ok(ProviderKind::Anthropic(key))
         }
         Some(other) => {
-            anyhow::bail!("unknown HOB_PROVIDER: {other} (expected \"anthropic\" or \"openai\")");
+            anyhow::bail!("unknown provider: {other} (expected \"anthropic\" or \"openai\")");
         }
         None => {
-            if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+            // Auto-detect from available keys
+            if let Some(key) = cfg.resolve_api_key("anthropic") {
                 return Ok(ProviderKind::Anthropic(key));
             }
-            if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-                let base_url = std::env::var("OPENAI_API_BASE").ok();
+            if let Some(key) = cfg.resolve_api_key("openai") {
                 return Ok(ProviderKind::OpenAI(key, base_url));
             }
             anyhow::bail!(
-                "No API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.\n\
-                 You can also set HOB_PROVIDER to force a provider."
+                "No API key found.\n\n\
+                 Set an environment variable:\n  \
+                 export ANTHROPIC_API_KEY=sk-ant-...\n  \
+                 export OPENAI_API_KEY=sk-...\n\n\
+                 Or run hob and use:\n  \
+                 /key anthropic sk-ant-...\n  \
+                 /key openai sk-..."
             );
         }
     }

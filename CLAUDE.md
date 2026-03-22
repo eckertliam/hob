@@ -16,6 +16,13 @@ cargo check --manifest-path agent/Cargo.toml  # type-check
 cargo test --manifest-path agent/Cargo.toml   # run tests
 ```
 
+## Working principles
+
+**Search before assuming.** If you're unsure about something factual — current
+model names, API formats, library APIs, version numbers — do a web search. Do
+not guess or rely on potentially stale training data. This applies to anything
+that changes over time.
+
 ## Testing requirements
 
 **Every code change must include tests.** This is mandatory, not optional.

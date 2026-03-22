@@ -45,6 +45,8 @@ enum ChatLine {
     ToolResult(String, bool),
     Status(String),
     Error(String),
+    /// System message (command output, help text).
+    System(String),
     Separator,
 }
 
@@ -71,10 +73,12 @@ struct App {
     /// Input history.
     history: Vec<String>,
     history_index: Option<usize>,
+    /// Current model ID.
+    model: String,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(model: String) -> Self {
         Self {
             chat: vec![],
             input: String::new(),
@@ -87,7 +91,133 @@ impl App {
             pending_permission: None,
             history: vec![],
             history_index: None,
+            model,
         }
+    }
+
+    /// Handle a slash command. Returns true if input was a command.
+    fn handle_command(&mut self, input: &str) -> bool {
+        let parts: Vec<&str> = input.trim().splitn(3, ' ').collect();
+        match parts.first().copied() {
+            Some("/model") => {
+                if let Some(model_id) = parts.get(1) {
+                    if let Some(info) = crate::models::lookup(model_id) {
+                        self.model = info.id.to_string();
+                        // Persist to config
+                        if let Ok(mut cfg) = crate::config::Config::load() {
+                            cfg.model = Some(info.id.to_string());
+                            let _ = cfg.save();
+                        }
+                        self.chat.push(ChatLine::System(format!(
+                            "Model set to {} ({}). Restart hob to apply.",
+                            info.name, info.id
+                        )));
+                    } else {
+                        self.chat.push(ChatLine::System(format!(
+                            "Unknown model: {model_id}"
+                        )));
+                        self.show_model_list();
+                    }
+                } else {
+                    self.show_model_list();
+                }
+                true
+            }
+            Some("/provider") => {
+                if let Some(provider) = parts.get(1) {
+                    if *provider == "anthropic" || *provider == "openai" {
+                        if let Ok(mut cfg) = crate::config::Config::load() {
+                            cfg.provider = Some(provider.to_string());
+                            let _ = cfg.save();
+                        }
+                        self.chat.push(ChatLine::System(format!(
+                            "Provider set to {provider}. Restart hob to apply."
+                        )));
+                    } else {
+                        self.chat.push(ChatLine::System(
+                            "Usage: /provider anthropic|openai".into(),
+                        ));
+                    }
+                } else {
+                    self.chat.push(ChatLine::System(
+                        "Usage: /provider anthropic|openai".into(),
+                    ));
+                }
+                true
+            }
+            Some("/key") => {
+                if parts.len() >= 3 {
+                    let provider = parts[1];
+                    let key = parts[2];
+                    if let Ok(mut cfg) = crate::config::Config::load() {
+                        match provider {
+                            "anthropic" => {
+                                cfg.anthropic_api_key = Some(key.to_string());
+                                let _ = cfg.save();
+                                self.chat.push(ChatLine::System(
+                                    "Anthropic API key saved. Restart hob to apply.".into(),
+                                ));
+                            }
+                            "openai" => {
+                                cfg.openai_api_key = Some(key.to_string());
+                                let _ = cfg.save();
+                                self.chat.push(ChatLine::System(
+                                    "OpenAI API key saved. Restart hob to apply.".into(),
+                                ));
+                            }
+                            _ => {
+                                self.chat.push(ChatLine::System(
+                                    "Usage: /key anthropic|openai <api-key>".into(),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    self.chat.push(ChatLine::System(
+                        "Usage: /key anthropic|openai <api-key>".into(),
+                    ));
+                }
+                true
+            }
+            Some("/help") => {
+                self.chat.push(ChatLine::System(
+                    "Commands:\n  \
+                     /model [id]              — show or set model\n  \
+                     /provider anthropic|openai — set provider\n  \
+                     /key anthropic|openai <key> — save API key\n  \
+                     /help                    — show this help"
+                        .into(),
+                ));
+                true
+            }
+            _ if input.starts_with('/') => {
+                self.chat.push(ChatLine::System(format!(
+                    "Unknown command: {}. Type /help for available commands.",
+                    parts.first().unwrap_or(&"")
+                )));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn show_model_list(&mut self) {
+        let mut text = String::from("Available models:\n");
+
+        text.push_str("\n  Anthropic:\n");
+        for m in crate::models::models_for_provider("anthropic") {
+            let current = if m.id == self.model { " ← current" } else { "" };
+            text.push_str(&format!("    {} ({}){}\n", m.id, m.name, current));
+        }
+
+        text.push_str("\n  OpenAI:\n");
+        for m in crate::models::models_for_provider("openai") {
+            let current = if m.id == self.model { " ← current" } else { "" };
+            text.push_str(&format!("    {} ({}){}\n", m.id, m.name, current));
+        }
+
+        text.push_str("\n  Usage: /model <id>");
+        self.chat.push(ChatLine::System(text));
     }
 
     fn next_task_id(&mut self) -> String {
@@ -145,6 +275,7 @@ pub async fn run(
         ui_rx,
         action_tx,
         &pending_permissions,
+        model,
     )
     .await;
 
@@ -221,8 +352,9 @@ async fn run_ui_loop(
     mut ui_rx: EventReceiver,
     action_tx: ActionSender,
     _pending_permissions: &PendingMap,
+    model: String,
 ) -> anyhow::Result<()> {
-    let app = Arc::new(Mutex::new(App::new()));
+    let app = Arc::new(Mutex::new(App::new(model)));
 
     loop {
         // Draw
@@ -290,32 +422,38 @@ async fn run_ui_loop(
                                 return Ok(());
                             }
                         }
-                        // Enter: send input
+                        // Enter: send input or handle slash command
                         KeyEvent {
                             code: KeyCode::Enter,
                             modifiers: KeyModifiers::NONE,
                             ..
                         } => {
                             if !app.input.trim().is_empty() {
-                                let prompt = app.input.trim().to_string();
-                                app.history.push(prompt.clone());
+                                let input = app.input.trim().to_string();
+                                app.history.push(input.clone());
                                 app.history_index = None;
                                 app.input.clear();
                                 app.cursor = 0;
-
-                                let id = app.next_task_id();
-                                app.current_task = Some(id.clone());
-                                app.status = "streaming".into();
-
-                                app.chat.push(ChatLine::Separator);
-                                app.chat.push(ChatLine::UserHeader);
-                                app.chat.push(ChatLine::UserText(prompt.clone()));
-                                app.chat.push(ChatLine::AssistantHeader);
                                 app.following = true;
 
-                                action_tx
-                                    .send(UserAction::Task { id, prompt })
-                                    .await;
+                                // Check for slash commands
+                                if app.handle_command(&input) {
+                                    // Command handled, don't send as prompt
+                                } else {
+                                    // Regular prompt
+                                    let id = app.next_task_id();
+                                    app.current_task = Some(id.clone());
+                                    app.status = "streaming".into();
+
+                                    app.chat.push(ChatLine::Separator);
+                                    app.chat.push(ChatLine::UserHeader);
+                                    app.chat.push(ChatLine::UserText(input.clone()));
+                                    app.chat.push(ChatLine::AssistantHeader);
+
+                                    action_tx
+                                        .send(UserAction::Task { id, prompt: input })
+                                        .await;
+                                }
                             }
                         }
                         // Backspace
@@ -539,6 +677,10 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
             ChatLine::Error(msg) => Line::from(Span::styled(
                 format!("  ✗ {msg}"),
                 Style::default().fg(Color::Red),
+            )),
+            ChatLine::System(msg) => Line::from(Span::styled(
+                format!("  {msg}"),
+                Style::default().fg(Color::Blue),
             )),
             ChatLine::Separator => Line::from(Span::styled(
                 "─".repeat(f.area().width as usize),

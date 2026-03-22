@@ -38,23 +38,8 @@ Which files were read or modified?";
 
 /// Check if we should trigger compaction based on token usage.
 pub fn should_compact(input_tokens: u32, model: &str) -> bool {
-    let limit = context_limit(model);
+    let limit = crate::models::context_limit(model);
     input_tokens > limit.saturating_sub(COMPACTION_BUFFER)
-}
-
-/// Get the context window limit for a model.
-pub fn context_limit(model: &str) -> u32 {
-    if model.contains("opus") {
-        200_000
-    } else if model.contains("sonnet") || model.contains("haiku") {
-        200_000
-    } else if model.contains("gpt-4o") {
-        128_000
-    } else if model.contains("gpt-4") {
-        128_000
-    } else {
-        200_000 // safe default
-    }
 }
 
 /// Phase 1: Prune old tool outputs.
@@ -270,19 +255,12 @@ mod tests {
     }
 
     #[test]
-    fn test_context_limit_known_model() {
-        assert_eq!(context_limit("claude-sonnet-4-20250514"), 200_000);
-        assert_eq!(context_limit("gpt-4o-mini"), 128_000);
-    }
-
-    #[test]
-    fn test_context_limit_unknown_model() {
-        assert_eq!(context_limit("some-future-model"), 200_000);
-    }
-
-    #[test]
     fn test_should_compact() {
-        assert!(!should_compact(100_000, "claude-sonnet-4-20250514"));
-        assert!(should_compact(190_000, "claude-sonnet-4-20250514"));
+        // claude-sonnet-4-6 has 1M context
+        assert!(!should_compact(100_000, "claude-sonnet-4-6"));
+        assert!(should_compact(990_000, "claude-sonnet-4-6"));
+        // Unknown model defaults to 200K
+        assert!(!should_compact(100_000, "unknown-model"));
+        assert!(should_compact(190_000, "unknown-model"));
     }
 }
