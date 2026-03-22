@@ -36,6 +36,19 @@
     (when val
       (should (equal val (string-trim val))))))
 
+(ert-deftest hob-test-shell-getenv-no-ansi-codes ()
+  "hob--shell-getenv should not contain ANSI escape sequences."
+  (let ((val (hob--shell-getenv "HOME")))
+    (when val
+      (should-not (string-match-p "\033\\[" val)))))
+
+(ert-deftest hob-test-shell-getenv-matches-getenv ()
+  "hob--shell-getenv should return the same value as getenv for HOME."
+  (let ((shell-val (hob--shell-getenv "HOME"))
+        (env-val (getenv "HOME")))
+    (when (and shell-val env-val)
+      (should (equal shell-val env-val)))))
+
 ;; ── API key resolution tests ───────────────────────────────────────
 
 (ert-deftest hob-test-api-key-from-hob-api-key ()

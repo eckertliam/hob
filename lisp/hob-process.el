@@ -14,13 +14,21 @@
 (defun hob--shell-getenv (var)
   "Get environment variable VAR from the user's login shell.
 GUI Emacs on macOS doesn't inherit shell env vars, so this spawns
-a login shell to read them.  Returns nil if not found."
-  (let ((shell (or (getenv "SHELL") "/bin/sh")))
+a login shell to read them.  Uses markers to extract the value
+cleanly, ignoring any shell init noise (ANSI codes, prompts, etc.).
+Returns nil if not found."
+  (let ((shell (or (getenv "SHELL") "/bin/sh"))
+        (marker-start "HOB_ENV_VAL_START")
+        (marker-end "HOB_ENV_VAL_END"))
     (condition-case nil
-        (let ((val (string-trim
-                    (shell-command-to-string
-                     (format "%s -l -c 'printf %%s \"$%s\"'" shell var)))))
-          (if (string-empty-p val) nil val))
+        (let* ((raw (shell-command-to-string
+                     (format "%s -l -c 'echo %s; printf %%s \"$%s\"; echo %s'"
+                             shell marker-start var marker-end)))
+               (val (when (string-match
+                           (concat marker-start "\n\\(\\(?:.\\|\n\\)*?\\)" marker-end)
+                           raw)
+                      (match-string 1 raw))))
+          (if (or (null val) (string-empty-p val)) nil val))
       (error nil))))
 
 (defvar hob--output-buffer ""
