@@ -97,8 +97,8 @@ If nil, uses the default OpenAI API URL."
   (interactive)
   (when (hob-process-running-p)
     (hob-stop))
-  (straight-pull-package 'hob)
-  (straight-rebuild-package 'hob)
+  (straight-pull-package "hob")
+  (straight-rebuild-package "hob")
   (let ((default-directory (expand-file-name "hob" straight--repos-dir)))
     (compile "make build")))
 
