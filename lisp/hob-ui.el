@@ -143,9 +143,11 @@
   "Called when task TASK-ID begins with PROMPT."
   (with-current-buffer (hob-ui--get-or-create-buffer)
     (setq hob--current-task-id task-id))
-  (hob-ui--append-output (propertize "You:\n" 'face 'hob-user-face))
+  (hob-ui--append-output (propertize "You:\n" 'face 'hob-user-face
+                                     'hob-message 'user))
   (hob-ui--append-output (concat prompt "\n\n"))
-  (hob-ui--append-output (propertize "hob:\n" 'face 'hob-assistant-face))
+  (hob-ui--append-output (propertize "hob:\n" 'face 'hob-assistant-face
+                                     'hob-message 'assistant))
   (display-buffer (hob-ui--get-or-create-buffer)))
 
 (defun hob-ui-append-token (_task-id content)
@@ -277,6 +279,38 @@
   (interactive)
   (insert "\n"))
 
+;; ── Message navigation ──────────────────────────────────────────────
+
+(defun hob-ui-next-message ()
+  "Jump to the next message header in the chat history."
+  (interactive)
+  (let ((pos (next-single-property-change (point) 'hob-message)))
+    (when pos
+      ;; If we're on a message header, skip past it first
+      (when (get-text-property pos 'hob-message)
+        (let ((next (next-single-property-change pos 'hob-message)))
+          (when next (setq pos next))))
+      ;; Now find the next message header
+      (let ((target (text-property-any pos (point-max) 'hob-message 'user)))
+        (unless target
+          (setq target (text-property-any pos (point-max) 'hob-message 'assistant)))
+        (when target
+          (goto-char target)
+          (recenter 2))))))
+
+(defun hob-ui-prev-message ()
+  "Jump to the previous message header in the chat history."
+  (interactive)
+  (let ((pos (previous-single-property-change (point) 'hob-message)))
+    (when pos
+      ;; Walk back to find the start of this property region
+      (let ((start (previous-single-property-change pos 'hob-message)))
+        (when (and start (get-text-property start 'hob-message))
+          (setq pos start)))
+      (when (get-text-property pos 'hob-message)
+        (goto-char pos)
+        (recenter 2)))))
+
 ;; ── Scroll tracking ────────────────────────────────────────────────
 
 (defun hob-ui--check-following ()
@@ -294,6 +328,10 @@
     (define-key map (kbd "C-j")       #'hob-ui-newline)
     (define-key map (kbd "C-c C-k")   #'hob-ui-cancel)
     (define-key map (kbd "C-c C-n")   #'hob-ui-new-chat)
+    (define-key map (kbd "C-c C-p")   #'hob-ui-prev-message)
+    (define-key map (kbd "C-c p")     #'hob-ui-prev-message)
+    (define-key map (kbd "C-c C-f")   #'hob-ui-next-message)
+    (define-key map (kbd "C-c n")     #'hob-ui-next-message)
     (define-key map (kbd "M-p")       #'hob-ui-history-prev)
     (define-key map (kbd "M-n")       #'hob-ui-history-next)
     map)
