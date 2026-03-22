@@ -11,6 +11,18 @@
 (defvar hob--process nil
   "The hob-agent subprocess, or nil if not running.")
 
+(defun hob--shell-getenv (var)
+  "Get environment variable VAR from the user's login shell.
+GUI Emacs on macOS doesn't inherit shell env vars, so this spawns
+a login shell to read them.  Returns nil if not found."
+  (let ((shell (or (getenv "SHELL") "/bin/sh")))
+    (condition-case nil
+        (let ((val (string-trim
+                    (shell-command-to-string
+                     (format "%s -l -c 'printf %%s \"$%s\"'" shell var)))))
+          (if (string-empty-p val) nil val))
+      (error nil))))
+
 (defvar hob--output-buffer ""
   "Accumulator for partial output lines from the subprocess.")
 
@@ -21,25 +33,25 @@
   (unless (file-executable-p hob-agent-binary)
     (user-error "hob-agent binary not found at %s — run `make build'"
                 hob-agent-binary))
+  ;; On macOS, GUI Emacs doesn't inherit shell env vars.
+  ;; If we can't find the API key, ask the user's login shell for it.
   (let* ((api-key (or hob-api-key
                       (getenv "ANTHROPIC_API_KEY")
-                      (getenv "OPENAI_API_KEY")))
+                      (getenv "OPENAI_API_KEY")
+                      (hob--shell-getenv "ANTHROPIC_API_KEY")
+                      (hob--shell-getenv "OPENAI_API_KEY")))
          (process-environment
           (append (list (concat "HOB_MODEL=" hob-model))
-                  ;; Set provider if explicitly chosen
                   (when hob-provider
                     (list (concat "HOB_PROVIDER=" hob-provider)))
-                  ;; Pass API key — from hob-api-key or inherited env
                   (when api-key
                     (cond
                      ((equal hob-provider "openai")
                       (list (concat "OPENAI_API_KEY=" api-key)))
                      ((equal hob-provider "anthropic")
                       (list (concat "ANTHROPIC_API_KEY=" api-key)))
-                     ;; Auto-detect: set both, agent picks the right one
                      (t (list (concat "ANTHROPIC_API_KEY=" api-key)
                               (concat "OPENAI_API_KEY=" api-key)))))
-                  ;; Custom OpenAI base URL
                   (when hob-openai-base-url
                     (list (concat "OPENAI_API_BASE=" hob-openai-base-url)))
                   process-environment)))
