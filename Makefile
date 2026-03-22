@@ -6,6 +6,7 @@ BINARY_NAME = hob-agent
 .PHONY: build install clean byte-compile test test-elisp test-rust test-integration
 
 build:
+	touch agent/src/main.rs
 	$(CARGO) build --release --manifest-path agent/Cargo.toml
 
 install: build
