@@ -4,9 +4,13 @@
 //! execute function. The registry provides tool definitions (for sending
 //! to the LLM) and dispatch (for executing tool calls).
 
+pub mod edit_file;
+pub mod glob;
+pub mod grep;
 pub mod list_files;
 pub mod read_file;
 pub mod shell;
+pub mod write_file;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -21,8 +25,12 @@ const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 pub fn definitions() -> Vec<ToolDef> {
     vec![
         read_file::definition(),
+        write_file::definition(),
+        edit_file::definition(),
         shell::definition(),
         list_files::definition(),
+        glob::definition(),
+        grep::definition(),
     ]
 }
 
@@ -34,8 +42,12 @@ pub async fn execute(
 ) -> Result<String> {
     let output = match tool_name {
         "read_file" => read_file::execute(input).await?,
+        "write_file" => write_file::execute(input).await?,
+        "edit_file" => edit_file::execute(input).await?,
         "shell" => shell::execute(input, cancel).await?,
         "list_files" => list_files::execute(input).await?,
+        "glob" => glob::execute(input).await?,
+        "grep" => grep::execute(input).await?,
         _ => anyhow::bail!("unknown tool: {tool_name}"),
     };
 
