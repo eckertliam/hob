@@ -9,7 +9,8 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::api::{ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest};
+use crate::api::{ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest, Usage};
+use crate::compaction;
 use crate::error::{self, ClassifiedError};
 use crate::ipc;
 use crate::permission::{self, Action, Decision, PendingMap, Rule};
@@ -74,7 +75,7 @@ pub async fn run_task(
             max_tokens: 16384,
         };
 
-        let stop_reason = stream_response(
+        let (stop_reason, usage) = stream_response(
             provider,
             request,
             &task_id,
@@ -82,6 +83,32 @@ pub async fn run_task(
             &mut messages,
         )
         .await?;
+
+        // Check if compaction is needed
+        if let Some(ref u) = usage {
+            if compaction::should_compact(u.input_tokens, model) {
+                info!("task {task_id}: approaching context limit, pruning...");
+                let freed = compaction::prune_tool_outputs(&mut messages);
+                info!("task {task_id}: pruned {freed} bytes");
+
+                // If pruning wasn't enough, summarize
+                if compaction::should_compact(
+                    u.input_tokens.saturating_sub(freed as u32 / 4), // rough estimate
+                    model,
+                ) {
+                    info!("task {task_id}: pruning insufficient, summarizing...");
+                    match compaction::summarize(provider, model, &messages).await {
+                        Ok(summary) => {
+                            compaction::compact(&mut messages, summary, true);
+                            info!("task {task_id}: compacted to {} messages", messages.len());
+                        }
+                        Err(e) => {
+                            tracing::warn!("compaction failed: {e}");
+                        }
+                    }
+                }
+            }
+        }
 
         match stop_reason {
             Some(StopReason::ToolUse) => {
@@ -209,7 +236,7 @@ async fn stream_response(
     task_id: &str,
     cancel: &CancellationToken,
     messages: &mut Vec<Message>,
-) -> Result<Option<StopReason>> {
+) -> Result<(Option<StopReason>, Option<Usage>)> {
     // Retry loop for transient API errors
     let mut attempt = 0u32;
     let mut rx = loop {
@@ -233,7 +260,7 @@ async fn stream_response(
                         _ = tokio::time::sleep(delay) => continue,
                         _ = cancel.cancelled() => {
                             send_cancelled(task_id).await?;
-                            return Ok(None);
+                            return Ok((None, None));
                         }
                     }
                 } else {
@@ -246,12 +273,13 @@ async fn stream_response(
     let mut text_parts: HashMap<u32, String> = HashMap::new();
     let mut tool_calls: HashMap<u32, PendingToolCall> = HashMap::new();
     let mut stop_reason: Option<StopReason> = None;
+    let mut last_usage: Option<Usage> = None;
 
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
                 send_cancelled(task_id).await?;
-                return Ok(None);
+                return Ok((None, None));
             }
             event = rx.recv() => {
                 match event {
@@ -278,8 +306,11 @@ async fn stream_response(
                             tc.args_json.push_str(&args_json);
                         }
                     }
-                    Some(Ok(StreamEvent::MessageDelta { stop_reason: sr, .. })) => {
+                    Some(Ok(StreamEvent::MessageDelta { stop_reason: sr, usage })) => {
                         stop_reason = sr;
+                        if usage.is_some() {
+                            last_usage = usage;
+                        }
                     }
                     Some(Ok(StreamEvent::MessageStop)) | None => {
                         break;
@@ -293,7 +324,7 @@ async fn stream_response(
                             message: format!("stream error: {e}"),
                         })
                         .await?;
-                        return Ok(None);
+                        return Ok((None, None));
                     }
                 }
             }
@@ -335,7 +366,7 @@ async fn stream_response(
         messages.push(Message::Assistant { content });
     }
 
-    Ok(stop_reason)
+    Ok((stop_reason, last_usage))
 }
 
 /// Extract tool calls from the last assistant message.

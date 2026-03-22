@@ -1,5 +1,6 @@
 mod agent;
 mod api;
+mod compaction;
 mod error;
 mod ipc;
 mod permission;
