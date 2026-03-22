@@ -75,6 +75,9 @@ struct App {
     history_index: Option<usize>,
     /// Current model ID.
     model: String,
+    /// Cumulative token usage for current session.
+    total_input_tokens: u32,
+    total_output_tokens: u32,
 }
 
 impl App {
@@ -92,6 +95,8 @@ impl App {
             history: vec![],
             history_index: None,
             model,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
         }
     }
 
@@ -599,7 +604,14 @@ async fn run_ui_loop(
                     app.chat.push(ChatLine::ToolResult(short, is_error));
                     app.status = "streaming".into();
                 }
-                UiEvent::Done { .. } => {
+                UiEvent::Done { input_tokens, output_tokens, .. } => {
+                    app.total_input_tokens += input_tokens;
+                    app.total_output_tokens += output_tokens;
+                    app.chat.push(ChatLine::System(format!(
+                        "tokens: {}in / {}out",
+                        format_tokens(input_tokens),
+                        format_tokens(output_tokens),
+                    )));
                     app.chat.push(ChatLine::Separator);
                     app.current_task = None;
                     app.status = "idle".into();
@@ -626,6 +638,16 @@ async fn run_ui_loop(
                 }
             }
         }
+    }
+}
+
+fn format_tokens(n: u32) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        format!("{n}")
     }
 }
 
@@ -701,7 +723,16 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
             " ⚠ {tool}: {resource}  [y]once [!]always [n]reject ",
         )
     } else {
-        format!(" hob:{} ", app.status)
+        let tokens = if app.total_input_tokens > 0 {
+            format!(
+                "  {}in/{}out",
+                format_tokens(app.total_input_tokens),
+                format_tokens(app.total_output_tokens),
+            )
+        } else {
+            String::new()
+        };
+        format!(" hob:{}  model:{}{}  /help ", app.status, app.model, tokens)
     };
     let status_style = match app.status.as_str() {
         "idle" => Style::default().fg(Color::DarkGray).bg(Color::Black),

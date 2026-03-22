@@ -53,6 +53,8 @@ pub async fn run_task(
     let mut messages = vec![Message::User {
         content: vec![ContentBlock::Text { text: prompt }],
     }];
+    let mut total_input_tokens: u32 = 0;
+    let mut total_output_tokens: u32 = 0;
 
     loop {
         if cancel.is_cancelled() {
@@ -72,6 +74,12 @@ pub async fn run_task(
             provider, request, &task_id, &cancel, &mut messages, ui,
         )
         .await?;
+
+        // Accumulate token usage
+        if let Some(ref u) = usage {
+            total_input_tokens += u.input_tokens;
+            total_output_tokens += u.output_tokens;
+        }
 
         // Check if compaction is needed
         if let Some(ref u) = usage {
@@ -192,7 +200,12 @@ pub async fn run_task(
         tracing::warn!("failed to save messages: {e}");
     }
 
-    ui.send(UiEvent::Done { id: task_id.clone() }).await;
+    ui.send(UiEvent::Done {
+        id: task_id.clone(),
+        input_tokens: total_input_tokens,
+        output_tokens: total_output_tokens,
+    })
+    .await;
     info!("task {task_id} done");
     Ok(())
 }

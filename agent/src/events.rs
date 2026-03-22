@@ -24,7 +24,11 @@ pub enum UiEvent {
         is_error: bool,
     },
     /// Task completed successfully.
-    Done { id: String },
+    Done {
+        id: String,
+        input_tokens: u32,
+        output_tokens: u32,
+    },
     /// An error occurred.
     Error { id: String, message: String },
     /// Status update (retry, busy, etc).
