@@ -139,17 +139,17 @@ Used to apply markdown rendering when the response completes.")
             "\n"
             (propertize (make-string 60 ?─) 'face 'hob-separator-face)
             "\n\n")
-    ;; Mark end of output region
+    ;; Mark end of output region (advances past inserts so appends go in order)
     (setq hob--output-end (point-marker))
-    (set-marker-insertion-type hob--output-end nil)
+    (set-marker-insertion-type hob--output-end t)
     ;; Insert input prompt
     (insert (propertize "\n" 'face 'hob-separator-face)
             (propertize (make-string 60 ?─) 'face 'hob-separator-face)
             "\n"
             (propertize "> " 'face 'hob-prompt-face))
-    ;; Mark start of editable input
+    ;; Mark start of editable input (stays put so typed text falls after it)
     (setq hob--input-marker (point-marker))
-    (set-marker-insertion-type hob--input-marker t)
+    (set-marker-insertion-type hob--input-marker nil)
     ;; Make history region read-only
     (add-text-properties (point-min) hob--input-marker
                          '(read-only t rear-nonsticky t))
