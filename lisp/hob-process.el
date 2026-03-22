@@ -78,8 +78,9 @@ Returns nil if not found."
 
 (defun hob-process-stop ()
   "Stop the hob-agent subprocess."
-  (when (hob-process-running-p)
-    (delete-process hob--process)
+  (when hob--process
+    (when (processp hob--process)
+      (ignore-errors (delete-process hob--process)))
     (setq hob--process nil)
     (message "hob-agent stopped")))
 
