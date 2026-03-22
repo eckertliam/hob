@@ -1,6 +1,7 @@
 mod agent;
 mod api;
 mod ipc;
+mod prompt;
 mod tools;
 
 use std::sync::Arc;

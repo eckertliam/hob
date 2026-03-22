@@ -11,22 +11,8 @@ use tracing::info;
 
 use crate::api::{ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest};
 use crate::ipc;
+use crate::prompt;
 use crate::tools;
-
-/// Build the system prompt with environment context.
-fn build_system_prompt() -> String {
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "unknown".into());
-    let platform = std::env::consts::OS;
-
-    format!(
-        "You are a helpful AI coding assistant.\n\n\
-         # Environment\n\
-         - Working directory: {cwd}\n\
-         - Platform: {platform}\n"
-    )
-}
 
 /// A tool call being accumulated from the stream.
 struct PendingToolCall {
@@ -52,7 +38,7 @@ pub async fn run_task(
 ) -> Result<()> {
     info!("starting task {task_id}");
 
-    let system = build_system_prompt();
+    let system = prompt::build_system_prompt(model);
     let tool_defs = tools::definitions();
 
     let mut messages = vec![Message::User {
