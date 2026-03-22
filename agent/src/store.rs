@@ -159,6 +159,16 @@ impl Store {
         Ok(sessions)
     }
 
+    /// Update session title.
+    pub async fn update_title(&self, id: &str, title: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE sessions SET title = ?1 WHERE id = ?2",
+            rusqlite::params![title, id],
+        )?;
+        Ok(())
+    }
+
     /// Delete a session and its messages.
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().await;

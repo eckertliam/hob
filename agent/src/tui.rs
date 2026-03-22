@@ -78,10 +78,12 @@ struct App {
     /// Cumulative token usage for current session.
     total_input_tokens: u32,
     total_output_tokens: u32,
+    /// Store reference for session commands.
+    store: Store,
 }
 
 impl App {
-    fn new(model: String) -> Self {
+    fn new(model: String, store: Store) -> Self {
         Self {
             chat: vec![],
             input: String::new(),
@@ -97,11 +99,12 @@ impl App {
             model,
             total_input_tokens: 0,
             total_output_tokens: 0,
+            store,
         }
     }
 
     /// Handle a slash command. Returns true if input was a command.
-    fn handle_command(&mut self, input: &str) -> bool {
+    async fn handle_command(&mut self, input: &str) -> bool {
         let parts: Vec<&str> = input.trim().splitn(3, ' ').collect();
         match parts.first().copied() {
             Some("/model") => {
@@ -184,12 +187,49 @@ impl App {
                 }
                 true
             }
+            Some("/sessions") => {
+                match self.store.list_sessions().await {
+                    Ok(sessions) => {
+                        if sessions.is_empty() {
+                            self.chat.push(ChatLine::System("No sessions found.".into()));
+                        } else {
+                            let mut text = String::from("Recent sessions:\n");
+                            for (i, s) in sessions.iter().take(20).enumerate() {
+                                let title = if s.title.is_empty() {
+                                    "(untitled)"
+                                } else {
+                                    &s.title
+                                };
+                                text.push_str(&format!(
+                                    "  {}. {} — {}\n",
+                                    i + 1,
+                                    title,
+                                    s.directory,
+                                ));
+                            }
+                            self.chat.push(ChatLine::System(text));
+                        }
+                    }
+                    Err(e) => {
+                        self.chat.push(ChatLine::System(format!("Error: {e}")));
+                    }
+                }
+                true
+            }
+            Some("/clear") => {
+                self.chat.clear();
+                self.total_input_tokens = 0;
+                self.total_output_tokens = 0;
+                true
+            }
             Some("/help") => {
                 self.chat.push(ChatLine::System(
                     "Commands:\n  \
                      /model [id]              — show or set model\n  \
                      /provider anthropic|openai — set provider\n  \
                      /key anthropic|openai <key> — save API key\n  \
+                     /sessions                — list recent sessions\n  \
+                     /clear                   — clear chat history\n  \
                      /help                    — show this help"
                         .into(),
                 ));
@@ -285,6 +325,7 @@ pub async fn run(
         action_tx,
         &pending_permissions,
         model,
+        store,
     )
     .await;
 
@@ -366,8 +407,9 @@ async fn run_ui_loop(
     action_tx: ActionSender,
     _pending_permissions: &PendingMap,
     model: String,
+    store: Store,
 ) -> anyhow::Result<()> {
-    let app = Arc::new(Mutex::new(App::new(model)));
+    let app = Arc::new(Mutex::new(App::new(model, store)));
 
     loop {
         // Draw
@@ -450,7 +492,7 @@ async fn run_ui_loop(
                                 app.following = true;
 
                                 // Check for slash commands
-                                if app.handle_command(&input) {
+                                if app.handle_command(&input).await {
                                     // Command handled, don't send as prompt
                                 } else {
                                     // Regular prompt

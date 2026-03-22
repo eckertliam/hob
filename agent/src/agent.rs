@@ -45,6 +45,13 @@ pub async fn run_task(
         tracing::warn!("failed to create session: {e}");
     }
 
+    // Auto-generate title from first 50 chars of prompt
+    let title: String = prompt.chars().take(50).collect();
+    let title = title.lines().next().unwrap_or(&title).to_string();
+    if let Err(e) = store.update_title(&task_id, &title).await {
+        tracing::warn!("failed to set session title: {e}");
+    }
+
     let system = prompt::build_system_prompt(model);
     let tool_defs = tools::definitions();
     let default_rules = permission::default_rules();
