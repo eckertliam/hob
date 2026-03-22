@@ -56,6 +56,21 @@
   "Called when task TASK-ID has a status update MESSAGE."
   (hob-ui--buffer-append (format "\n[status: %s]\n" message)))
 
+(defun hob-ui-permission-request (task-id request-id tool resource)
+  "Prompt user for permission: TOOL wants to access RESOURCE.
+TASK-ID is the owning task, REQUEST-ID identifies this request."
+  (hob-ui--buffer-append
+   (format "\n[permission: %s wants to access %s]\n" tool resource))
+  (let ((choice (read-char-choice
+                 (format "%s: %s (y=once, !=always, n=reject): " tool resource)
+                 '(?y ?! ?n))))
+    (let ((decision (pcase choice
+                      (?y "once")
+                      (?! "always")
+                      (_ "reject"))))
+      (hob-ipc-send-permission-response request-id decision)
+      (hob-ui--buffer-append (format "[decision: %s]\n" decision)))))
+
 (define-derived-mode hob-ui-mode special-mode "Hob"
   "Major mode for the hob agent output buffer."
   (setq buffer-read-only t)

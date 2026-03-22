@@ -2,6 +2,7 @@ mod agent;
 mod api;
 mod error;
 mod ipc;
+mod permission;
 mod prompt;
 mod store;
 mod tools;

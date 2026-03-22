@@ -31,6 +31,13 @@
   (hob-process-send
    (json-encode `(("type" . "cancel") ("id" . ,task-id)))))
 
+(defun hob-ipc-send-permission-response (request-id decision)
+  "Respond to permission REQUEST-ID with DECISION (\"once\", \"always\", \"reject\")."
+  (hob-process-send
+   (json-encode `(("type" . "permission_response")
+                  ("request_id" . ,request-id)
+                  ("decision" . ,decision)))))
+
 (defun hob-ipc-send-ping ()
   "Send a ping to check subprocess health."
   (hob-process-send (json-encode '(("type" . "ping")))))
@@ -58,6 +65,11 @@
            (hob-ui-task-error id (alist-get 'message msg)))
           ("status"
            (hob-ui-task-status id (alist-get 'message msg)))
+          ("permission_request"
+           (hob-ui-permission-request id
+                                      (alist-get 'request_id msg)
+                                      (alist-get 'tool msg)
+                                      (alist-get 'resource msg)))
           ("pong"
            (message "hob-agent: pong"))
           (_

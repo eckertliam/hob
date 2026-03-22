@@ -12,6 +12,7 @@ use tracing::info;
 use crate::api::{ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest};
 use crate::error::{self, ClassifiedError};
 use crate::ipc;
+use crate::permission::{self, Action, Decision, PendingMap, Rule};
 use crate::prompt;
 use crate::store::Store;
 use crate::tools;
@@ -38,6 +39,7 @@ pub async fn run_task(
     prompt: String,
     cancel: CancellationToken,
     store: &Store,
+    pending_permissions: &PendingMap,
 ) -> Result<()> {
     info!("starting task {task_id}");
 
@@ -51,6 +53,8 @@ pub async fn run_task(
 
     let system = prompt::build_system_prompt(model);
     let tool_defs = tools::definitions();
+    let default_rules = permission::default_rules();
+    let mut session_rules: Vec<Rule> = Vec::new();
 
     let mut messages = vec![Message::User {
         content: vec![ContentBlock::Text { text: prompt }],
@@ -92,22 +96,70 @@ pub async fn run_task(
 
                 let mut results = Vec::new();
                 for (call_id, tool_name, input) in &tool_calls {
-                    // Notify Emacs that a tool is being called
-                    ipc::send(&ipc::Response::ToolCall {
-                        id: task_id.clone(),
-                        tool: tool_name.clone(),
-                        input: input.clone(),
-                    })
-                    .await?;
+                    // Check permissions
+                    let perm = permission::tool_permission(tool_name);
+                    let resource = permission::tool_resource(tool_name, input);
+                    let action = permission::evaluate(
+                        perm,
+                        &resource,
+                        &[&default_rules, &session_rules],
+                    );
 
-                    // Execute the tool
-                    let (output, is_error) =
-                        match tools::execute(tool_name, input.clone(), &cancel).await {
-                            Ok(output) => (output, false),
-                            Err(e) => (format!("Error: {e:#}"), true),
-                        };
+                    let (output, is_error) = match action {
+                        Action::Deny => {
+                            (format!("Permission denied: {perm} {resource}"), true)
+                        }
+                        Action::Allow | Action::Ask => {
+                            // If Ask, request permission from Emacs
+                            if action == Action::Ask {
+                                let req_id = format!("perm-{}-{}", task_id, call_id);
+                                let (tx, rx) = tokio::sync::oneshot::channel();
+                                pending_permissions.lock().await.insert(req_id.clone(), tx);
 
-                    // Notify Emacs of the result
+                                ipc::send(&ipc::Response::PermissionRequest {
+                                    id: task_id.clone(),
+                                    request_id: req_id,
+                                    tool: tool_name.clone(),
+                                    resource: resource.clone(),
+                                })
+                                .await?;
+
+                                // Wait for user decision
+                                match rx.await {
+                                    Ok(Decision::Once) => {}
+                                    Ok(Decision::Always) => {
+                                        session_rules.push(Rule {
+                                            permission: perm.to_string(),
+                                            pattern: "*".into(),
+                                            action: Action::Allow,
+                                        });
+                                    }
+                                    _ => {
+                                        results.push(ContentBlock::ToolResult {
+                                            tool_use_id: call_id.clone(),
+                                            content: "Permission denied by user".into(),
+                                            is_error: true,
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            // Notify Emacs and execute
+                            ipc::send(&ipc::Response::ToolCall {
+                                id: task_id.clone(),
+                                tool: tool_name.clone(),
+                                input: input.clone(),
+                            })
+                            .await?;
+
+                            match tools::execute(tool_name, input.clone(), &cancel).await {
+                                Ok(output) => (output, false),
+                                Err(e) => (format!("Error: {e:#}"), true),
+                            }
+                        }
+                    };
+
                     ipc::send(&ipc::Response::ToolResult {
                         id: task_id.clone(),
                         tool: tool_name.clone(),

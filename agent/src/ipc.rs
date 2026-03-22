@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Provider;
+use crate::permission::{self, Decision, PendingMap};
 use crate::store::Store;
 
 /// Messages received from Emacs.
@@ -24,6 +25,11 @@ pub enum Request {
     Task { id: String, prompt: String },
     /// Cancel an in-progress task.
     Cancel { id: String },
+    /// User responded to a permission request.
+    PermissionResponse {
+        request_id: String,
+        decision: String,
+    },
     /// Ping for health check.
     Ping,
 }
@@ -50,6 +56,13 @@ pub enum Response {
     Done { id: String },
     /// An error occurred.
     Error { id: String, message: String },
+    /// Request permission from the user.
+    PermissionRequest {
+        id: String,
+        request_id: String,
+        tool: String,
+        resource: String,
+    },
     /// Status update (retry, busy, idle).
     Status { id: String, message: String },
     /// Response to Ping.
@@ -75,6 +88,7 @@ pub async fn run_loop(provider: Arc<dyn Provider>, model: String, store: Store) 
     let reader = BufReader::new(stdin);
     let mut lines = reader.lines();
     let tasks: TaskMap = Arc::new(Mutex::new(HashMap::new()));
+    let pending_permissions = permission::new_pending_map();
 
     while let Some(line) = lines.next_line().await? {
         let line = line.trim().to_string();
@@ -83,7 +97,15 @@ pub async fn run_loop(provider: Arc<dyn Provider>, model: String, store: Store) 
         }
         match serde_json::from_str::<Request>(&line) {
             Ok(request) => {
-                handle_request(request, &provider, &model, &tasks, &store).await?;
+                handle_request(
+                    request,
+                    &provider,
+                    &model,
+                    &tasks,
+                    &store,
+                    &pending_permissions,
+                )
+                .await?;
             }
             Err(e) => {
                 tracing::error!("Failed to parse request: {e}: {line}");
@@ -100,6 +122,7 @@ async fn handle_request(
     model: &str,
     tasks: &TaskMap,
     store: &Store,
+    pending_permissions: &PendingMap,
 ) -> Result<()> {
     match request {
         Request::Ping => {
@@ -113,12 +136,20 @@ async fn handle_request(
             let model = model.to_string();
             let tasks = Arc::clone(tasks);
             let store = store.clone();
+            let pending = Arc::clone(pending_permissions);
             let task_id = id.clone();
 
             tokio::spawn(async move {
-                let result =
-                    crate::agent::run_task(&*provider, &model, task_id.clone(), prompt, cancel, &store)
-                        .await;
+                let result = crate::agent::run_task(
+                    &*provider,
+                    &model,
+                    task_id.clone(),
+                    prompt,
+                    cancel,
+                    &store,
+                    &pending,
+                )
+                .await;
                 if let Err(e) = &result {
                     let _ = send(&Response::Error {
                         id: task_id.clone(),
@@ -128,6 +159,17 @@ async fn handle_request(
                 }
                 tasks.lock().await.remove(&task_id);
             });
+        }
+        Request::PermissionResponse {
+            request_id,
+            decision,
+        } => {
+            let d = match decision.as_str() {
+                "once" => Decision::Once,
+                "always" => Decision::Always,
+                _ => Decision::Reject,
+            };
+            permission::resolve(pending_permissions, &request_id, d).await;
         }
         Request::Cancel { id } => {
             if let Some(cancel) = tasks.lock().await.get(&id) {
