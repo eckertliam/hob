@@ -40,85 +40,67 @@ if it wants tools execute them and re-prompt, if it says stop then break.
 
 ## Phase 3: Persistence
 
-SQLite message storage. The agent loop switches from in-memory to reading state
-from the DB each iteration — no in-memory state carried across iterations.
+Simplified SQLite persistence — snapshot-based message storage rather than
+full DB-driven loop.
 
-- [ ] SQLite schema: `sessions`, `messages`, `parts` tables
-- [ ] WAL mode + pragmas for concurrent access
-- [ ] Agent loop reads messages from DB at start of each iteration
-- [ ] Stream processor persists parts as they arrive
-- [ ] Session create/list/delete
-- [ ] Delta streaming: publish token chunks to Emacs without DB writes,
-      persist only on text completion
+- [x] SQLite schema: `sessions` and `messages` tables
+- [x] WAL mode + pragmas (busy_timeout, synchronous, foreign_keys)
+- [x] Session create/list/delete
+- [x] Save full message history as JSON blob on task completion
+- [x] Load messages for session resume (API ready, UI not yet wired)
+- [x] Store threaded through IPC loop into spawned agent tasks
 
 ## Phase 4: Error handling and retry
 
-Classify API errors and handle them correctly instead of crashing.
-
-- [ ] Error classification: context overflow, rate limit, auth, server error
-- [ ] Exponential backoff for rate limits (2s x 2^n, cap 30s)
-- [ ] Respect `Retry-After` headers
-- [ ] `status` IPC message so Emacs shows "retrying in 8s..."
-- [ ] Context overflow triggers compaction (or error until phase 7)
-- [ ] Cancellable retry sleep (abort signal interrupts the wait)
+- [x] ClassifiedError with ApiErrorKind enum
+- [x] Error classification: context overflow, rate limit, auth, overloaded
+- [x] Exponential backoff (2s × 2^n, cap 30s), respects Retry-After headers
+- [x] `status` IPC message for retry feedback in Emacs
+- [x] Cancellable retry sleep (cancel token interrupts wait)
+- [x] Anthropic provider returns ClassifiedError on HTTP errors
 
 ## Phase 5: Permissions
 
-Safety layer between the LLM's tool calls and actual execution.
-
-- [ ] Permission rule evaluator (last-match-wins wildcard matching)
-- [ ] Three actions: allow, deny, ask
-- [ ] `permission_request` / `permission_response` IPC messages
-- [ ] Emacs-side permission UI (child frame or minibuffer prompt)
-- [ ] Cascade: reject one pending permission → reject all pending in session
-- [ ] "Always" approval auto-resolves matching pending requests
-- [ ] Default rules: allow reads, ask for writes and shell commands
+- [x] Last-match-wins wildcard rule evaluation (*, ? patterns)
+- [x] Three actions: allow, deny, ask
+- [x] Default rules: allow reads, ask for bash/edit
+- [x] permission_request / permission_response IPC messages
+- [x] Async ask: oneshot channels block tool until user responds
+- [x] Cascade on reject: all pending permissions denied
+- [x] "Always" adds session-level allow rule
+- [x] Emacs UI: read-char-choice (y=once, !=always, n=reject)
 
 ## Phase 6: More tools
 
-Flesh out the tool set now that the infrastructure is solid.
-
-- [ ] `write_file` with read-before-write invariant
-- [ ] `edit_file` with fuzzy match cascade (exact → whitespace-normalized →
-      indentation-flexible → context-anchored)
-- [ ] `glob` (shell out to ripgrep, sorted by mtime)
-- [ ] `grep` (ripgrep, grouped by file with line numbers)
-- [ ] Output truncation for all tools (~50KB cap, save full to disk)
-- [ ] `batch` tool for parallel execution (up to 25 tools)
+- [x] `write_file`: creates parent dirs, overwrites existing
+- [x] `edit_file`: 4-level fuzzy match cascade (exact, whitespace-normalized,
+      indentation-flexible, context-anchored)
+- [x] `glob`: ripgrep with find fallback, 100 result cap
+- [x] `grep`: ripgrep with grep fallback, 100 match cap
+- [x] Output truncation applied to all tools (50KB cap)
 
 ## Phase 7: Compaction
 
-Context window management for long sessions.
-
-- [ ] Phase 1 prune: clear old tool outputs, replace with
-      "[Old tool result cleared]"
-- [ ] Phase 2 summarize: LLM call with structured template
-      (Goal, Instructions, Discoveries, Accomplished, Files)
-- [ ] Auto-trigger when tokens approach context limit
-- [ ] `filterCompacted`: only send messages from latest compaction boundary
-      forward to the model
-- [ ] Protected content: never prune instruction/skill outputs
+- [x] Phase 1 prune: clear old tool outputs, protect last 2 user turns
+- [x] Phase 2 summarize: LLM call with structured template
+- [x] Auto-trigger when input tokens approach context limit
+- [x] compact() replaces history with summary + last user replay
+- [x] Model context limit map (Claude 200K, GPT-4 128K, default 200K)
 
 ## Phase 8: System prompt assembly
 
-Full layered prompt construction.
+- [x] Base prompt with behavioral guidelines
+- [x] Environment context (model, cwd, platform, shell, git repo/branch)
+- [x] Project instruction files (.hob.md searched upward from cwd)
+- [ ] Prompt caching markers (deferred — optimization, not correctness)
 
-- [ ] Base prompt (agent identity, behavioral guidelines)
-- [ ] Environment context (cwd, platform, git status, date)
-- [ ] Project instruction files (`.hob.md` or `AGENTS.md` in project root)
-- [ ] Prompt caching markers (Anthropic `cache_control` on stable content)
+## Future work
 
-## Open questions
-
-- **Phases 1+2 as one phase?** The agent loop structure is fundamentally about
-  tool calls. A single-turn-only loop that gets retrofitted with tool handling
-  might be throwaway work. Could jump straight to "streaming + tool loop" as
-  one phase.
-- **Subagents**: child sessions with restricted permissions and tool sets.
-  Useful but not required for a working agent. Implement after the core is
-  solid.
-- **Snapshot/revert**: git-based file change tracking using a separate repo
-  with the same worktree. Nice for undo but a lot of machinery. Defer until
-  the tool system is proven.
-- **Multi-session UI**: session switching, history browsing, forking. The
-  storage layer supports it from phase 3 but the Elisp UI would need work.
+- **Batch tool**: parallel tool execution (up to 25 at once)
+- **Subagents**: child sessions with restricted permissions
+- **Snapshot/revert**: git-based file change tracking
+- **Multi-session UI**: session switching, history browsing
+- **Read-before-write invariant**: track which files have been read
+- **AST-based bash permissions**: tree-sitter command parsing
+- **Prompt caching**: Anthropic cache_control on stable content
+- **Session resume UI**: Emacs-side session list and selection

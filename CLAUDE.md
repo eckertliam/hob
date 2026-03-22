@@ -4,14 +4,13 @@
 
 hob is a native Emacs AI coding agent. Two halves:
 
-- **`agent/`** — Rust binary (`hob-agent`). Runs a multi-turn agent loop:
-  streams LLM responses via a provider abstraction (Anthropic implemented,
-  OpenAI-ready), executes tools (read_file, shell, list_files), feeds results
-  back, and re-prompts until the model stops. Communicates with Emacs over
-  newline-delimited JSON on stdin/stdout. No persistence yet (messages in memory).
+- **`agent/`** — Rust binary (`hob-agent`). Multi-turn agent loop with tool
+  execution, permission gating, error retry, context compaction, and SQLite
+  persistence. Provider abstraction supports Anthropic (implemented) and
+  OpenAI (interface ready). Communicates with Emacs over newline-delimited
+  JSON on stdin/stdout.
 - **`lisp/`** — Emacs Lisp package. Subprocess lifecycle, JSON IPC
-  encode/decode, and a `*hob*` output buffer that streams tokens and shows
-  tool call/result markers.
+  encode/decode, streaming output in `*hob*` buffer, and permission prompts.
 
 ## Build & test
 
@@ -66,8 +65,8 @@ and confirm all tests pass before considering the work done.
 ### Rust (agent/)
 
 - Rust 2021 edition, stable toolchain.
-- `anyhow::Result` for error propagation. Define domain error types only when
-  callers need to match on variants.
+- `anyhow::Result` for error propagation. `ClassifiedError` in `error.rs` for
+  API errors that need to be matched on (retry vs bail).
 - `tokio` for async. The IPC loop, agent loop, API client, and tools are all
   async.
 - `tracing` for logging (`info!`, `debug!`, `error!`). Never write to stdout
@@ -77,8 +76,9 @@ and confirm all tests pass before considering the work done.
 - Tool implementations go in separate files under `agent/src/tools/`. Each tool
   exports `definition() -> ToolDef` and `execute(Value) -> Result<String>`.
   The registry in `tools/mod.rs` collects definitions and dispatches by name.
-- Tool output is truncated at 50KB. The truncation happens in `tools/mod.rs`
-  after execution.
+- Tool output is truncated at 50KB in `tools/mod.rs` after execution.
+- Permission checks happen in the agent loop before tool execution, not in the
+  tools themselves.
 
 ### Elisp (lisp/)
 
@@ -90,55 +90,59 @@ and confirm all tests pass before considering the work done.
 - Process filter accumulates partial lines in `hob--output-buffer`, splits on
   `\n`, dispatches complete JSON lines to `hob-ipc-dispatch`.
 
+## Source files
+
+### agent/src/
+
+| File | Purpose |
+|------|---------|
+| `main.rs` | Entry point: parse env vars, create provider + store, run IPC loop |
+| `agent.rs` | Multi-turn agent loop: stream → tools → re-prompt → compaction |
+| `api/mod.rs` | Provider trait, StreamEvent, Message, ContentBlock, ToolDef |
+| `api/anthropic.rs` | Anthropic SSE → StreamEvent, classified error handling |
+| `api/sse.rs` | Shared SSE parser for Anthropic and OpenAI |
+| `ipc.rs` | JSON IPC: Request/Response enums, stdin/stdout, task spawning |
+| `prompt.rs` | Layered system prompt: base + environment + .hob.md files |
+| `error.rs` | Error classification, exponential backoff, retry logic |
+| `permission.rs` | Wildcard rule evaluation, async ask flow, cascade |
+| `compaction.rs` | Prune old tool outputs, summarize via LLM, compact |
+| `store.rs` | SQLite session/message persistence (WAL mode) |
+| `tools/mod.rs` | Tool registry, dispatch, output truncation |
+| `tools/read_file.rs` | Read with line numbers, offset/limit |
+| `tools/write_file.rs` | Write with mkdir -p |
+| `tools/edit_file.rs` | Find-and-replace with 4-level fuzzy cascade |
+| `tools/shell.rs` | sh -c with timeout and cancel |
+| `tools/list_files.rs` | Directory listing |
+| `tools/glob.rs` | ripgrep --files --glob |
+| `tools/grep.rs` | ripgrep search |
+
 ## Current IPC protocol
 
-All messages are single-line JSON with a `"type"` field. This is what's
-currently defined in `agent/src/ipc.rs`.
+All messages are single-line JSON with a `"type"` field.
 
 ### Emacs → agent (Request)
 
-| type | fields | status |
-|------|--------|--------|
-| `task` | `id`, `prompt` | spawns agent loop on a tokio task |
-| `cancel` | `id` | fires CancellationToken for the task |
-| `ping` | | replies with pong |
+| type | fields | purpose |
+|------|--------|---------|
+| `task` | `id`, `prompt` | start agent task |
+| `cancel` | `id` | cancel in-flight task |
+| `permission_response` | `request_id`, `decision` | answer permission ask |
+| `ping` | | health check |
 
 ### Agent → Emacs (Response)
 
-| type | fields | status |
-|------|--------|--------|
-| `token` | `id`, `content` | streamed during LLM response |
-| `tool_call` | `id`, `tool`, `input` | sent before tool execution |
-| `tool_result` | `id`, `tool`, `output` | sent after tool execution |
-| `done` | `id` | sent when task completes |
-| `error` | `id`, `message` | sent on errors or cancellation |
-| `pong` | | reply to ping |
+| type | fields | purpose |
+|------|--------|---------|
+| `token` | `id`, `content` | streaming text |
+| `tool_call` | `id`, `tool`, `input` | tool being executed |
+| `tool_result` | `id`, `tool`, `output` | tool finished |
+| `permission_request` | `id`, `request_id`, `tool`, `resource` | needs user approval |
+| `status` | `id`, `message` | retry/status feedback |
+| `done` | `id` | task complete |
+| `error` | `id`, `message` | error or cancellation |
+| `pong` | | health check reply |
 
 ## Research
 
-`research/` contains detailed architecture docs reverse-engineered from the
-OpenCode agent harness. This is the reference for how to build out the agent.
-
-Read order: `00-overview.md` first, then 01–08 (core systems) in order.
-09–14 are reference docs to consult as needed.
-
-Key design decisions from the research:
-
-- **Agent loop** (01): `while(true)`, reads state from DB each iteration,
-  continues on `tool_calls` finish reason, breaks on `stop`.
-- **Stream processor** (02): SSE events → tool state machine
-  (pending→running→completed|error), doom loop detection.
-- **Tools** (03, 10): functions with JSON schemas, permission check before
-  execution, output truncation. The edit tool uses a multi-level fuzzy match
-  cascade.
-- **Permissions** (04): last-match-wins wildcard rules, async ask flow,
-  rejection cascades.
-- **Compaction** (05): prune old tool outputs first (cheap), then summarize via
-  LLM call (expensive).
-- **Provider abstraction** (06): we're Anthropic-only for now but the streaming
-  interface should be clean enough to swap later.
-- **System prompts** (07): layered assembly — base prompt, environment context,
-  instruction files.
-- **Retry** (08): context overflow → compact, rate limit → backoff (2s×2^n, cap
-  30s), auth → stop.
-- **Storage** (09): SQLite, WAL mode, session→message→part hierarchy.
+`research/` contains architecture docs reverse-engineered from OpenCode.
+Read `00-overview.md` first, then 01–08 for core systems.
