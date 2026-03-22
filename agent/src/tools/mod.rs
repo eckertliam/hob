@@ -1,39 +1,59 @@
-//! Tool dispatch and implementations.
+//! Tool registry and dispatch.
 //!
-//! Each tool corresponds to a capability the agent can invoke
-//! (read file, write file, run shell command, etc.)
+//! Each tool has a name, JSON schema for its parameters, and an async
+//! execute function. The registry provides tool definitions (for sending
+//! to the LLM) and dispatch (for executing tool calls).
+
+pub mod list_files;
+pub mod read_file;
+pub mod shell;
 
 use anyhow::Result;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
-/// Execute a named tool with the given input, return its output string.
-/// TODO: implement each tool
-pub async fn execute(tool_name: &str, input: Value) -> Result<String> {
-    match tool_name {
-        "read_file" => read_file(input).await,
-        "write_file" => write_file(input).await,
-        "shell" => shell(input).await,
-        "list_files" => list_files(input).await,
-        _ => anyhow::bail!("Unknown tool: {tool_name}"),
+use crate::api::ToolDef;
+
+/// Maximum output size before truncation (50KB).
+const MAX_OUTPUT_BYTES: usize = 50 * 1024;
+
+/// Return the list of tool definitions to send to the LLM.
+pub fn definitions() -> Vec<ToolDef> {
+    vec![
+        read_file::definition(),
+        shell::definition(),
+        list_files::definition(),
+    ]
+}
+
+/// Execute a named tool with the given input. Returns the output string.
+pub async fn execute(
+    tool_name: &str,
+    input: Value,
+    cancel: &CancellationToken,
+) -> Result<String> {
+    let output = match tool_name {
+        "read_file" => read_file::execute(input).await?,
+        "shell" => shell::execute(input, cancel).await?,
+        "list_files" => list_files::execute(input).await?,
+        _ => anyhow::bail!("unknown tool: {tool_name}"),
+    };
+
+    Ok(truncate_output(output))
+}
+
+/// Truncate tool output if it exceeds the size limit.
+fn truncate_output(output: String) -> String {
+    if output.len() <= MAX_OUTPUT_BYTES {
+        return output;
     }
-}
-
-async fn read_file(_input: Value) -> Result<String> {
-    // TODO: implement
-    todo!("read_file")
-}
-
-async fn write_file(_input: Value) -> Result<String> {
-    // TODO: implement
-    todo!("write_file")
-}
-
-async fn shell(_input: Value) -> Result<String> {
-    // TODO: implement
-    todo!("shell")
-}
-
-async fn list_files(_input: Value) -> Result<String> {
-    // TODO: implement
-    todo!("list_files")
+    let truncated = &output[..MAX_OUTPUT_BYTES];
+    // Find the last newline to avoid cutting mid-line
+    let cut = truncated.rfind('\n').unwrap_or(MAX_OUTPUT_BYTES);
+    format!(
+        "{}\n\n[output truncated: {} bytes total, showing first {}]",
+        &output[..cut],
+        output.len(),
+        cut
+    )
 }

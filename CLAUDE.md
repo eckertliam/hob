@@ -2,14 +2,16 @@
 
 ## Project
 
-hob is a native Emacs AI coding agent, early stage. Two halves:
+hob is a native Emacs AI coding agent. Two halves:
 
-- **`agent/`** — Rust binary (`hob-agent`). Currently has IPC message types and
-  a read/write loop over stdin/stdout. Agent loop, API client, tools, and
-  storage are all stubs.
+- **`agent/`** — Rust binary (`hob-agent`). Runs a multi-turn agent loop:
+  streams LLM responses via a provider abstraction (Anthropic implemented,
+  OpenAI-ready), executes tools (read_file, shell, list_files), feeds results
+  back, and re-prompts until the model stops. Communicates with Emacs over
+  newline-delimited JSON on stdin/stdout. No persistence yet (messages in memory).
 - **`lisp/`** — Emacs Lisp package. Subprocess lifecycle, JSON IPC
-  encode/decode, and a `*hob*` output buffer. All implemented, but there's no
-  working agent to drive yet.
+  encode/decode, and a `*hob*` output buffer that streams tokens and shows
+  tool call/result markers.
 
 ## Build & test
 
@@ -27,13 +29,17 @@ cargo test --manifest-path agent/Cargo.toml   # run rust tests
 - Rust 2021 edition, stable toolchain.
 - `anyhow::Result` for error propagation. Define domain error types only when
   callers need to match on variants.
-- `tokio` for async. The IPC loop is async; the agent loop and API client will
-  be too.
+- `tokio` for async. The IPC loop, agent loop, API client, and tools are all
+  async.
 - `tracing` for logging (`info!`, `debug!`, `error!`). Never write to stdout
   except IPC messages — stdout is the Emacs pipe.
 - `serde` with `#[serde(tag = "type", rename_all = "snake_case")]` for all IPC
   message types so they serialize as `{"type": "token", ...}`.
-- Tool implementations go in separate files under `agent/src/tools/`.
+- Tool implementations go in separate files under `agent/src/tools/`. Each tool
+  exports `definition() -> ToolDef` and `execute(Value) -> Result<String>`.
+  The registry in `tools/mod.rs` collects definitions and dispatches by name.
+- Tool output is truncated at 50KB. The truncation happens in `tools/mod.rs`
+  after execution.
 
 ### Elisp (lisp/)
 
@@ -54,20 +60,20 @@ currently defined in `agent/src/ipc.rs`.
 
 | type | fields | status |
 |------|--------|--------|
-| `task` | `id`, `prompt` | parsed, returns stub error |
-| `cancel` | `id` | parsed, logged, no-op |
-| `ping` | | works, replies with pong |
+| `task` | `id`, `prompt` | spawns agent loop on a tokio task |
+| `cancel` | `id` | fires CancellationToken for the task |
+| `ping` | | replies with pong |
 
 ### Agent → Emacs (Response)
 
 | type | fields | status |
 |------|--------|--------|
-| `token` | `id`, `content` | defined, never sent yet |
-| `tool_call` | `id`, `tool`, `input` | defined, never sent yet |
-| `tool_result` | `id`, `tool`, `output` | defined, never sent yet |
-| `done` | `id` | defined, never sent yet |
-| `error` | `id`, `message` | sent as stub reply to task |
-| `pong` | | works |
+| `token` | `id`, `content` | streamed during LLM response |
+| `tool_call` | `id`, `tool`, `input` | sent before tool execution |
+| `tool_result` | `id`, `tool`, `output` | sent after tool execution |
+| `done` | `id` | sent when task completes |
+| `error` | `id`, `message` | sent on errors or cancellation |
+| `pong` | | reply to ping |
 
 ## Research
 

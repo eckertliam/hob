@@ -26,14 +26,17 @@ streaming response in the `*hob*` buffer.
 This is where it becomes an agent. The core `while(true)` loop: call the LLM,
 if it wants tools execute them and re-prompt, if it says stop then break.
 
-- [ ] Tool registry and dispatch in `tools/mod.rs`
-- [ ] Implement `read_file` tool
-- [ ] Implement `shell` tool (spawn process, capture output, timeout)
-- [ ] Agent loop handles `finish_reason: "tool_calls"`
-- [ ] Parse tool call from stream, execute, feed result back as tool_result
-- [ ] IPC: send `tool_call` and `tool_result` messages to Emacs
-- [ ] Abort signal: `cancel` IPC message kills in-flight API request + tools
-- [ ] `list_files` tool
+- [x] Tool registry with JSON schemas and dispatch (`tools/mod.rs`)
+- [x] `read_file` tool: line numbers, offset/limit, line truncation
+- [x] `shell` tool: spawns `sh -c`, timeout, cancel via kill_on_drop
+- [x] `list_files` tool: sorted entries, directory markers, 500 entry cap
+- [x] Agent loop: `while(true)` — stream response, accumulate tool calls,
+      execute on `ToolUse` stop reason, append results, re-prompt
+- [x] Tool call accumulation: tracks pending calls by stream index,
+      parses partial JSON on `ToolStop`
+- [x] IPC: sends `tool_call` and `tool_result` messages to Emacs
+- [x] Cancel: kills in-flight API stream + running shell processes
+- [x] Output truncation: 50KB cap on tool output
 
 ## Phase 3: Persistence
 
