@@ -252,7 +252,11 @@ pub async fn run(
     // Setup terminal
     terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -286,7 +290,11 @@ pub async fn run(
 
     // Restore terminal
     terminal::disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        crossterm::event::DisableBracketedPaste,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
 
     result
@@ -553,6 +561,21 @@ async fn run_ui_loop(
                             app.scroll += 10;
                             app.following = true;
                         }
+                        // Ctrl+J / Shift+Enter: newline in input
+                        KeyEvent {
+                            code: KeyCode::Char('j'),
+                            modifiers: KeyModifiers::CONTROL,
+                            ..
+                        }
+                        | KeyEvent {
+                            code: KeyCode::Enter,
+                            modifiers: KeyModifiers::SHIFT,
+                            ..
+                        } => {
+                            let pos = app.cursor;
+                            app.input.insert(pos, '\n');
+                            app.cursor += 1;
+                        }
                         // Regular character
                         KeyEvent {
                             code: KeyCode::Char(c),
@@ -565,6 +588,12 @@ async fn run_ui_loop(
                         }
                         _ => {}
                     }
+                }
+                Event::Paste(text) => {
+                    let mut app = app.lock().await;
+                    let pos = app.cursor;
+                    app.input.insert_str(pos, &text);
+                    app.cursor += text.len();
                 }
                 Event::Resize(_, _) => {
                     // Terminal will re-draw on next iteration
@@ -687,12 +716,16 @@ fn format_tokens(n: u32) -> String {
 
 /// Draw the UI.
 fn draw(f: &mut ratatui::Frame, app: &App) {
+    // Input area grows with content (min 3, max 10)
+    let input_lines = app.input.lines().count().max(1) as u16 + 2; // +2 for border
+    let input_height = input_lines.clamp(3, 10);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(3),        // Chat history
-            Constraint::Length(1),      // Status bar
-            Constraint::Length(3),      // Input
+            Constraint::Min(3),            // Chat history
+            Constraint::Length(1),          // Status bar
+            Constraint::Length(input_height), // Input
         ])
         .split(f.area());
 
