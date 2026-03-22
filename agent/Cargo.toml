@@ -1,11 +1,11 @@
 [package]
-name = "hob-agent"
+name = "hob"
 version = "0.1.0"
 edition = "2021"
-description = "Rust subprocess for the hob Emacs AI coding agent"
+description = "A terminal AI coding agent"
 
 [[bin]]
-name = "hob-agent"
+name = "hob"
 path = "src/main.rs"
 
 [dependencies]
@@ -20,6 +20,8 @@ futures = "0.3"
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+ratatui = "0.29"
+crossterm = "0.28"
 
 [dev-dependencies]
 http = "1"

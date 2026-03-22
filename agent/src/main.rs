@@ -2,11 +2,12 @@ mod agent;
 mod api;
 mod compaction;
 mod error;
-mod ipc;
+mod events;
 mod permission;
 mod prompt;
 mod store;
 mod tools;
+mod tui;
 
 use std::sync::Arc;
 
@@ -15,18 +16,21 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Log to stderr only — stdout is reserved for IPC with Emacs
+    // Log to a file — stderr is used by the TUI
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/hob.log")
+        .unwrap_or_else(|_| std::fs::File::create("/dev/null").unwrap());
     tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
+        .with_writer(std::sync::Mutex::new(log_file))
         .init();
 
-    info!("hob-agent starting");
+    info!("hob starting");
 
     let model =
         std::env::var("HOB_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
 
-    // Select provider based on which API key is available.
-    // HOB_PROVIDER env var can force a choice: "anthropic" or "openai".
     let provider: Arc<dyn api::Provider> = match detect_provider()? {
         ProviderKind::Anthropic(key) => {
             info!("using Anthropic provider");
@@ -47,7 +51,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("failed to open store at {}", db_path.display()))?;
     info!("store opened at {}", db_path.display());
 
-    ipc::run_loop(provider, model, store).await?;
+    tui::run(provider, model, store).await?;
 
     Ok(())
 }
@@ -76,7 +80,6 @@ fn detect_provider() -> Result<ProviderKind> {
             anyhow::bail!("unknown HOB_PROVIDER: {other} (expected \"anthropic\" or \"openai\")");
         }
         None => {
-            // Auto-detect: try Anthropic first, then OpenAI
             if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
                 return Ok(ProviderKind::Anthropic(key));
             }

@@ -12,8 +12,8 @@ use tracing::info;
 use crate::api::{ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest, Usage};
 use crate::compaction;
 use crate::error::{self, ClassifiedError};
-use crate::ipc;
-use crate::permission::{self, Action, Decision, PendingMap, Rule};
+use crate::events::{EventSender, UiEvent};
+use crate::permission::{self, Action, PendingMap, Rule};
 use crate::prompt;
 use crate::store::Store;
 use crate::tools;
@@ -25,14 +25,7 @@ struct PendingToolCall {
     args_json: String,
 }
 
-/// Run a single agent task to completion, sending IPC responses along the way.
-///
-/// The loop:
-/// 1. Call the LLM with the current message history + tool definitions
-/// 2. Stream tokens back to Emacs
-/// 3. Accumulate any tool calls from the stream
-/// 4. If stop_reason == ToolUse: execute tools, append results, go to 1
-/// 5. If stop_reason == EndTurn (or other): break
+/// Run a single agent task to completion, sending events to the TUI.
 pub async fn run_task(
     provider: &dyn Provider,
     model: &str,
@@ -41,10 +34,10 @@ pub async fn run_task(
     cancel: CancellationToken,
     store: &Store,
     pending_permissions: &PendingMap,
+    ui: &EventSender,
 ) -> Result<()> {
     info!("starting task {task_id}");
 
-    // Create session for persistence
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
@@ -63,7 +56,7 @@ pub async fn run_task(
 
     loop {
         if cancel.is_cancelled() {
-            send_cancelled(&task_id).await?;
+            send_cancelled(&task_id, ui).await;
             return Ok(());
         }
 
@@ -76,11 +69,7 @@ pub async fn run_task(
         };
 
         let (stop_reason, usage) = stream_response(
-            provider,
-            request,
-            &task_id,
-            &cancel,
-            &mut messages,
+            provider, request, &task_id, &cancel, &mut messages, ui,
         )
         .await?;
 
@@ -91,9 +80,8 @@ pub async fn run_task(
                 let freed = compaction::prune_tool_outputs(&mut messages);
                 info!("task {task_id}: pruned {freed} bytes");
 
-                // If pruning wasn't enough, summarize
                 if compaction::should_compact(
-                    u.input_tokens.saturating_sub(freed as u32 / 4), // rough estimate
+                    u.input_tokens.saturating_sub(freed as u32 / 4),
                     model,
                 ) {
                     info!("task {task_id}: pruning insufficient, summarizing...");
@@ -112,9 +100,6 @@ pub async fn run_task(
 
         match stop_reason {
             Some(StopReason::ToolUse) => {
-                // Execute tool calls that were accumulated and appended to messages
-                // by stream_response. The last message should be an assistant message
-                // with tool_use blocks. We need to execute them and append results.
                 let tool_calls = extract_tool_calls(&messages);
                 if tool_calls.is_empty() {
                     info!("task {task_id}: tool_use stop reason but no tool calls found");
@@ -123,13 +108,10 @@ pub async fn run_task(
 
                 let mut results = Vec::new();
                 for (call_id, tool_name, input) in &tool_calls {
-                    // Check permissions
                     let perm = permission::tool_permission(tool_name);
                     let resource = permission::tool_resource(tool_name, input);
                     let action = permission::evaluate(
-                        perm,
-                        &resource,
-                        &[&default_rules, &session_rules],
+                        perm, &resource, &[&default_rules, &session_rules],
                     );
 
                     let (output, is_error) = match action {
@@ -137,24 +119,22 @@ pub async fn run_task(
                             (format!("Permission denied: {perm} {resource}"), true)
                         }
                         Action::Allow | Action::Ask => {
-                            // If Ask, request permission from Emacs
                             if action == Action::Ask {
                                 let req_id = format!("perm-{}-{}", task_id, call_id);
                                 let (tx, rx) = tokio::sync::oneshot::channel();
                                 pending_permissions.lock().await.insert(req_id.clone(), tx);
 
-                                ipc::send(&ipc::Response::PermissionRequest {
+                                ui.send(UiEvent::PermissionRequest {
                                     id: task_id.clone(),
                                     request_id: req_id,
                                     tool: tool_name.clone(),
                                     resource: resource.clone(),
                                 })
-                                .await?;
+                                .await;
 
-                                // Wait for user decision
                                 match rx.await {
-                                    Ok(Decision::Once) => {}
-                                    Ok(Decision::Always) => {
+                                    Ok(permission::Decision::Once) => {}
+                                    Ok(permission::Decision::Always) => {
                                         session_rules.push(Rule {
                                             permission: perm.to_string(),
                                             pattern: "*".into(),
@@ -172,13 +152,12 @@ pub async fn run_task(
                                 }
                             }
 
-                            // Notify Emacs and execute
-                            ipc::send(&ipc::Response::ToolCall {
+                            ui.send(UiEvent::ToolCall {
                                 id: task_id.clone(),
                                 tool: tool_name.clone(),
                                 input: input.clone(),
                             })
-                            .await?;
+                            .await;
 
                             match tools::execute(tool_name, input.clone(), &cancel).await {
                                 Ok(output) => (output, false),
@@ -187,12 +166,13 @@ pub async fn run_task(
                         }
                     };
 
-                    ipc::send(&ipc::Response::ToolResult {
+                    ui.send(UiEvent::ToolResult {
                         id: task_id.clone(),
                         tool: tool_name.clone(),
                         output: output.clone(),
+                        is_error,
                     })
-                    .await?;
+                    .await;
 
                     results.push(ContentBlock::ToolResult {
                         tool_use_id: call_id.clone(),
@@ -201,43 +181,31 @@ pub async fn run_task(
                     });
                 }
 
-                // Append tool results as a user message and loop back
                 messages.push(Message::User { content: results });
                 info!("task {task_id}: executed {} tools, re-prompting", tool_calls.len());
             }
-            _ => {
-                // EndTurn, MaxTokens, or anything else — we're done
-                break;
-            }
+            _ => break,
         }
     }
 
-    // Persist messages before signaling completion
     if let Err(e) = store.save_messages(&task_id, &messages).await {
         tracing::warn!("failed to save messages: {e}");
     }
 
-    ipc::send(&ipc::Response::Done {
-        id: task_id.clone(),
-    })
-    .await?;
-
+    ui.send(UiEvent::Done { id: task_id.clone() }).await;
     info!("task {task_id} done");
     Ok(())
 }
 
 /// Stream a single LLM response, accumulating text and tool calls.
-///
-/// Appends the assistant message (with text + tool_use blocks) to `messages`.
-/// Returns the stop reason.
 async fn stream_response(
     provider: &dyn Provider,
     request: StreamRequest,
     task_id: &str,
     cancel: &CancellationToken,
     messages: &mut Vec<Message>,
+    ui: &EventSender,
 ) -> Result<(Option<StopReason>, Option<Usage>)> {
-    // Retry loop for transient API errors
     let mut attempt = 0u32;
     let mut rx = loop {
         match provider.stream(request.clone()).await {
@@ -251,15 +219,15 @@ async fn stream_response(
                     let delay = error::retry_delay(attempt, ce.retry_after);
                     let secs = delay.as_secs_f64();
                     info!("task {task_id}: {}, retrying in {secs:.1}s (attempt {attempt})", ce.message);
-                    ipc::send(&ipc::Response::Status {
+                    ui.send(UiEvent::Status {
                         id: task_id.to_string(),
                         message: format!("{}, retrying in {secs:.0}s...", ce.message),
                     })
-                    .await?;
+                    .await;
                     tokio::select! {
                         _ = tokio::time::sleep(delay) => continue,
                         _ = cancel.cancelled() => {
-                            send_cancelled(task_id).await?;
+                            send_cancelled(task_id, ui).await;
                             return Ok((None, None));
                         }
                     }
@@ -278,7 +246,7 @@ async fn stream_response(
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
-                send_cancelled(task_id).await?;
+                send_cancelled(task_id, ui).await;
                 return Ok((None, None));
             }
             event = rx.recv() => {
@@ -287,18 +255,15 @@ async fn stream_response(
                         text_parts.entry(index).or_default();
                     }
                     Some(Ok(StreamEvent::TextDelta { index, text })) => {
-                        ipc::send(&ipc::Response::Token {
+                        ui.send(UiEvent::Token {
                             id: task_id.to_string(),
                             content: text.clone(),
-                        })
-                        .await?;
+                        }).await;
                         text_parts.entry(index).or_default().push_str(&text);
                     }
                     Some(Ok(StreamEvent::ToolStart { index, id, name })) => {
                         tool_calls.insert(index, PendingToolCall {
-                            id,
-                            name,
-                            args_json: String::new(),
+                            id, name, args_json: String::new(),
                         });
                     }
                     Some(Ok(StreamEvent::ToolDelta { index, args_json })) => {
@@ -312,18 +277,13 @@ async fn stream_response(
                             last_usage = usage;
                         }
                     }
-                    Some(Ok(StreamEvent::MessageStop)) | None => {
-                        break;
-                    }
-                    Some(Ok(_)) => {
-                        // TextStop, ToolStop — no action needed
-                    }
+                    Some(Ok(StreamEvent::MessageStop)) | None => break,
+                    Some(Ok(_)) => {}
                     Some(Err(e)) => {
-                        ipc::send(&ipc::Response::Error {
+                        ui.send(UiEvent::Error {
                             id: task_id.to_string(),
                             message: format!("stream error: {e}"),
-                        })
-                        .await?;
+                        }).await;
                         return Ok((None, None));
                     }
                 }
@@ -331,10 +291,9 @@ async fn stream_response(
         }
     }
 
-    // Build the assistant message from accumulated parts
+    // Build assistant message from accumulated parts
     let mut content: Vec<ContentBlock> = Vec::new();
 
-    // Add text blocks (sorted by index)
     let mut text_indices: Vec<u32> = text_parts.keys().copied().collect();
     text_indices.sort();
     for idx in text_indices {
@@ -345,15 +304,12 @@ async fn stream_response(
         }
     }
 
-    // Add tool call blocks (sorted by index)
     let mut tool_indices: Vec<u32> = tool_calls.keys().copied().collect();
     tool_indices.sort();
     for idx in tool_indices {
         if let Some(tc) = tool_calls.remove(&idx) {
-            let input: serde_json::Value =
-                serde_json::from_str(&tc.args_json).unwrap_or(serde_json::Value::Object(
-                    serde_json::Map::new(),
-                ));
+            let input: serde_json::Value = serde_json::from_str(&tc.args_json)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             content.push(ContentBlock::ToolUse {
                 id: tc.id,
                 name: tc.name,
@@ -369,7 +325,6 @@ async fn stream_response(
     Ok((stop_reason, last_usage))
 }
 
-/// Extract tool calls from the last assistant message.
 fn extract_tool_calls(messages: &[Message]) -> Vec<(String, String, serde_json::Value)> {
     let Some(Message::Assistant { content }) = messages.last() else {
         return vec![];
@@ -385,11 +340,11 @@ fn extract_tool_calls(messages: &[Message]) -> Vec<(String, String, serde_json::
         .collect()
 }
 
-async fn send_cancelled(task_id: &str) -> Result<()> {
+async fn send_cancelled(task_id: &str, ui: &EventSender) {
     info!("task {task_id} cancelled");
-    ipc::send(&ipc::Response::Error {
+    ui.send(UiEvent::Error {
         id: task_id.to_string(),
         message: "cancelled".into(),
     })
-    .await
+    .await;
 }

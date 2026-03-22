@@ -1,168 +1,72 @@
 # hob
 
-A native Emacs AI coding agent. Elisp UI drives a Rust subprocess that runs
-a multi-turn agent loop over newline-delimited JSON on stdin/stdout.
+A terminal AI coding agent. Ratatui TUI over a multi-turn agent loop with
+tool execution, permission gating, and context compaction.
 
 ## Requirements
 
-- Emacs 29.1+
-- Rust toolchain (for building the agent binary)
+- Rust toolchain
 - An API key from Anthropic or OpenAI
 
 ## Installation
-
-### straight.el
-
-```elisp
-(straight-use-package
- '(hob :type git :host github :repo "eckertliam/hob"
-       :files ("lisp/*.el")
-       :post-build (("make" "build"))))
-```
-
-### Manual
 
 ```bash
 git clone https://github.com/eckertliam/hob.git
 cd hob
 make build
-```
-
-Then add to your Emacs config:
-
-```elisp
-(add-to-list 'load-path "/path/to/hob/lisp")
-(require 'hob)
+make install  # copies to ~/.local/bin/
 ```
 
 ## API key setup
 
-hob auto-detects your provider from whichever API key is set. Set one:
-
-**Anthropic:**
+Set one:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-```
-
-**OpenAI:**
-
-```bash
+# or
 export OPENAI_API_KEY="sk-..."
 ```
 
-Or set the key in Elisp (provider is auto-detected from the model name, or
-you can set it explicitly):
-
-```elisp
-;; Anthropic
-(setq hob-api-key "sk-ant-..."
-      hob-model "claude-sonnet-4-20250514")
-
-;; OpenAI
-(setq hob-provider "openai"
-      hob-api-key "sk-..."
-      hob-model "gpt-4o")
-```
+Auto-detects provider from whichever key is set. Force with `HOB_PROVIDER=openai` or `HOB_PROVIDER=anthropic`.
 
 **OpenAI-compatible APIs** (Ollama, vLLM, etc.):
 
-```elisp
-(setq hob-provider "openai"
-      hob-api-key "sk-..."
-      hob-model "my-model"
-      hob-openai-base-url "http://localhost:11434")
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_API_BASE="http://localhost:11434"
+export HOB_PROVIDER=openai
 ```
-
-If both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are set, Anthropic is used
-by default. Set `HOB_PROVIDER=openai` (env var) or `hob-provider` (Elisp)
-to override.
 
 ## Usage
 
-`M-x hob` opens the chat buffer. Type in the input area at the bottom and
-press `RET` to send.
+```bash
+hob
+```
+
+Type your prompt, press `Enter`.
 
 | Key | Action |
 |-----|--------|
-| `RET` | Send input |
-| `S-RET` / `C-j` | Insert newline in input |
-| `C-c C-k` | Cancel running task |
-| `C-c C-n` | New chat (clear history) |
-| `M-p` / `M-n` | Browse input history |
+| `Enter` | Send prompt |
+| `Ctrl-C` | Cancel task / quit |
+| `Up` / `Down` | Input history |
+| `PageUp` / `PageDown` | Scroll chat |
 
-When a tool requires permission (shell commands, file writes), you'll be
-prompted: `y` to allow once, `!` to allow for the session, `n` to deny.
-
-Other commands:
-
-```
-M-x hob-start   — start the agent subprocess manually
-M-x hob-stop    — stop the agent subprocess
-M-x hob-task    — send a prompt without the chat UI
-```
+When a tool needs permission, you'll see a prompt:
+`y` = allow once, `!` = allow for session, `n` = deny.
 
 ## Model selection
 
-The default model is `claude-sonnet-4-20250514`. Some options:
-
-```elisp
-;; Anthropic
-(setq hob-model "claude-sonnet-4-20250514")  ; default
-(setq hob-model "claude-opus-4-20250514")
-
-;; OpenAI
-(setq hob-model "gpt-4o")
-(setq hob-model "gpt-4o-mini")
+```bash
+export HOB_MODEL="claude-sonnet-4-20250514"  # default
+export HOB_MODEL="gpt-4o"
 ```
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────┐
-│                 Emacs (lisp/)                    │
-│                                                  │
-│  hob.el          – entry points, defcustoms      │
-│  hob-process.el  – subprocess lifecycle          │
-│  hob-ipc.el      – JSON encode/decode, dispatch  │
-│  hob-ui.el       – *hob* buffer, permissions UI  │
-│                                                  │
-│  stdin/stdout: newline-delimited JSON            │
-└──────────────────────┬───────────────────────────┘
-                       │
-┌──────────────────────▼───────────────────────────┐
-│              hob-agent (agent/)                  │
-│                                                  │
-│  agent.rs      – multi-turn tool loop            │
-│  api/          – provider abstraction (Anthropic + OpenAI) │
-│  tools/        – read, write, edit, shell, etc.  │
-│  permission.rs – wildcard rules, async ask flow  │
-│  compaction.rs – prune + summarize               │
-│  error.rs      – classify + retry with backoff   │
-│  store.rs      – SQLite session persistence      │
-│  prompt.rs     – layered system prompt           │
-└──────────────────────────────────────────────────┘
-```
-
-The agent loop: call the LLM, stream tokens to Emacs, accumulate tool calls.
-If the model wants tools, execute them (with permission checks), feed results
-back, and re-prompt. Repeat until the model stops. Context compaction kicks in
-automatically when the conversation approaches the model's token limit.
 
 ## Project instructions
 
-Create a `.hob.md` file in your project root to give the agent project-specific
-context (coding conventions, test commands, architecture notes). hob searches
-upward from the working directory and includes all `.hob.md` files it finds.
-
-## Building
-
-```
-make build        # cargo build --release
-make byte-compile # emacs --batch byte-compile lisp/*.el
-make install      # copy binary to ~/.local/bin
-make clean
-```
+Create a `.hob.md` file in your project root to give the agent context
+(coding conventions, test commands, architecture). hob searches upward
+from the working directory and includes all `.hob.md` files it finds.
 
 ## License
 
