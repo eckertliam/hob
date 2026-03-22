@@ -455,7 +455,17 @@ async fn run_ui_loop(
                     }
 
                     match key {
-                        // Ctrl-C / Ctrl-D: quit
+                        // Escape: cancel current task
+                        KeyEvent {
+                            code: KeyCode::Esc, ..
+                        } => {
+                            if let Some(ref id) = app.current_task {
+                                action_tx
+                                    .send(UserAction::Cancel { id: id.clone() })
+                                    .await;
+                            }
+                        }
+                        // Ctrl-C / Ctrl-D: cancel or quit
                         KeyEvent {
                             code: KeyCode::Char('c'),
                             modifiers: KeyModifiers::CONTROL,
@@ -467,7 +477,6 @@ async fn run_ui_loop(
                             ..
                         } => {
                             if app.current_task.is_some() {
-                                // Cancel current task
                                 if let Some(ref id) = app.current_task {
                                     action_tx
                                         .send(UserAction::Cancel { id: id.clone() })
@@ -854,7 +863,20 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
             String::new()
         };
         let branch = git_branch().map(|b| format!("  git:{b}")).unwrap_or_default();
-        format!(" hob:{}  model:{}{}{branch}  /help ", app.status, app.model, tokens)
+        let cwd = std::env::current_dir()
+            .ok()
+            .and_then(|p| {
+                let s = p.display().to_string();
+                // Shorten home dir to ~
+                if let Ok(home) = std::env::var("HOME") {
+                    if let Some(rest) = s.strip_prefix(&home) {
+                        return Some(format!("~{rest}"));
+                    }
+                }
+                Some(s)
+            })
+            .unwrap_or_default();
+        format!(" {cwd}  hob:{}{}{branch}  model:{}  /help ", app.status, tokens, app.model)
     };
     let status_style = match app.status.as_str() {
         "idle" => Style::default().fg(Color::DarkGray).bg(Color::Black),
