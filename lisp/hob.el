@@ -91,5 +91,16 @@ If nil, uses the default OpenAI API URL."
     (hob-start))
   (hob-ipc-send-task prompt))
 
+;;;###autoload
+(defun hob-update ()
+  "Pull latest hob, rebuild Elisp, and recompile the Rust agent."
+  (interactive)
+  (when (hob-process-running-p)
+    (hob-stop))
+  (straight-pull-package 'hob)
+  (straight-rebuild-package 'hob)
+  (let ((default-directory (straight--repos-dir "hob")))
+    (compile "make build")))
+
 (provide 'hob)
 ;;; hob.el ends here
