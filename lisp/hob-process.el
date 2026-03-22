@@ -63,7 +63,8 @@ a login shell to read them.  Returns nil if not found."
            :connection-type 'pipe
            :filter #'hob--process-filter
            :sentinel #'hob--process-sentinel
-           :noquery t)))
+           :noquery t
+           :stderr (get-buffer-create " *hob-stderr*"))))
   (message "hob-agent started (pid %d)" (process-id hob--process)))
 
 (defun hob-process-stop ()
