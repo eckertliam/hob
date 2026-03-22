@@ -21,25 +21,28 @@
   (unless (file-executable-p hob-agent-binary)
     (user-error "hob-agent binary not found at %s — run `make build'"
                 hob-agent-binary))
-  (let ((process-environment
-         (append (list (concat "HOB_MODEL=" hob-model))
-                 ;; Set provider if explicitly chosen
-                 (when hob-provider
-                   (list (concat "HOB_PROVIDER=" hob-provider)))
-                 ;; Pass API key to the right env var
-                 (when hob-api-key
-                   (cond
-                    ((equal hob-provider "openai")
-                     (list (concat "OPENAI_API_KEY=" hob-api-key)))
-                    ((equal hob-provider "anthropic")
-                     (list (concat "ANTHROPIC_API_KEY=" hob-api-key)))
-                    ;; Auto-detect: set both, agent picks the right one
-                    (t (list (concat "ANTHROPIC_API_KEY=" hob-api-key)
-                             (concat "OPENAI_API_KEY=" hob-api-key)))))
-                 ;; Custom OpenAI base URL
-                 (when hob-openai-base-url
-                   (list (concat "OPENAI_API_BASE=" hob-openai-base-url)))
-                 process-environment)))
+  (let* ((api-key (or hob-api-key
+                      (getenv "ANTHROPIC_API_KEY")
+                      (getenv "OPENAI_API_KEY")))
+         (process-environment
+          (append (list (concat "HOB_MODEL=" hob-model))
+                  ;; Set provider if explicitly chosen
+                  (when hob-provider
+                    (list (concat "HOB_PROVIDER=" hob-provider)))
+                  ;; Pass API key — from hob-api-key or inherited env
+                  (when api-key
+                    (cond
+                     ((equal hob-provider "openai")
+                      (list (concat "OPENAI_API_KEY=" api-key)))
+                     ((equal hob-provider "anthropic")
+                      (list (concat "ANTHROPIC_API_KEY=" api-key)))
+                     ;; Auto-detect: set both, agent picks the right one
+                     (t (list (concat "ANTHROPIC_API_KEY=" api-key)
+                              (concat "OPENAI_API_KEY=" api-key)))))
+                  ;; Custom OpenAI base URL
+                  (when hob-openai-base-url
+                    (list (concat "OPENAI_API_BASE=" hob-openai-base-url)))
+                  process-environment)))
     (setq hob--process
           (make-process
            :name "hob-agent"
