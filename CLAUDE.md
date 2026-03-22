@@ -6,9 +6,9 @@ hob is a native Emacs AI coding agent. Two halves:
 
 - **`agent/`** — Rust binary (`hob-agent`). Multi-turn agent loop with tool
   execution, permission gating, error retry, context compaction, and SQLite
-  persistence. Provider abstraction supports Anthropic (implemented) and
-  OpenAI (interface ready). Communicates with Emacs over newline-delimited
-  JSON on stdin/stdout.
+  persistence. Provider abstraction supports Anthropic and OpenAI (both
+  implemented). Communicates with Emacs over newline-delimited JSON on
+  stdin/stdout.
 - **`lisp/`** — Emacs Lisp package. Subprocess lifecycle, JSON IPC
   encode/decode, streaming output in `*hob*` buffer, and permission prompts.
 
@@ -17,8 +17,13 @@ hob is a native Emacs AI coding agent. Two halves:
 ```bash
 make build                                    # cargo build --release
 make byte-compile                             # emacs --batch byte-compile lisp/*.el
+make test                                     # run all tests (rust + elisp + integration)
+make test-rust                                # cargo test
+make test-elisp                               # emacs --batch ert tests
+make test-integration                         # integration tests (requires build)
+make install                                  # build + copy binary to ~/.local/bin/
+make clean                                    # clean cargo + .elc files
 cargo check --manifest-path agent/Cargo.toml  # type-check without full build
-cargo test --manifest-path agent/Cargo.toml   # run rust tests
 ```
 
 ## Testing requirements
@@ -105,6 +110,7 @@ be considered complete. When in doubt, use generic names (`HOB_API_KEY`, not
 | `agent.rs` | Multi-turn agent loop: stream → tools → re-prompt → compaction |
 | `api/mod.rs` | Provider trait, StreamEvent, Message, ContentBlock, ToolDef |
 | `api/anthropic.rs` | Anthropic SSE → StreamEvent, classified error handling |
+| `api/openai.rs` | OpenAI Chat Completions → StreamEvent, custom base URL support |
 | `api/sse.rs` | Shared SSE parser for Anthropic and OpenAI |
 | `ipc.rs` | JSON IPC: Request/Response enums, stdin/stdout, task spawning |
 | `prompt.rs` | Layered system prompt: base + environment + .hob.md files |
@@ -120,6 +126,22 @@ be considered complete. When in doubt, use generic names (`HOB_API_KEY`, not
 | `tools/list_files.rs` | Directory listing |
 | `tools/glob.rs` | ripgrep --files --glob |
 | `tools/grep.rs` | ripgrep search |
+
+### lisp/
+
+| File | Purpose |
+|------|---------|
+| `hob.el` | Main entry point: requires modules, defines `hob` customization group |
+| `hob-ipc.el` | JSON IPC encode/decode, task ID generation, response dispatch |
+| `hob-process.el` | Subprocess lifecycle: start/stop/monitor hob-agent process |
+| `hob-ui.el` | `*hob*` chat buffer: markdown rendering, collapsible tool sections, modeline |
+
+### test/
+
+| File | Purpose |
+|------|---------|
+| `hob-test.el` | Elisp unit tests (ERT) |
+| `hob-integration-test.el` | Integration tests requiring the built binary |
 
 ## Current IPC protocol
 
@@ -150,4 +172,4 @@ All messages are single-line JSON with a `"type"` field.
 ## Research
 
 `research/` contains architecture docs reverse-engineered from OpenCode.
-Read `00-overview.md` first, then 01–08 for core systems.
+Read `00-overview.md` first, then 01–14 for core systems and extensions.
