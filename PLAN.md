@@ -183,14 +183,22 @@ edit_file tool's search-and-replace with fuzzy matching.
 - **Don't let the agent compile after generating.** Compile during
   generation. The tighter the feedback loop, the better.
 
-## Implementation order
+## Implementation status
 
-1. Compiler-in-the-loop (highest impact, leverages existing LSP infra)
-2. Loop detection (trivial to implement, prevents worst failure mode)
-3. Plan/act separation (addresses top user complaint)
-4. Aggressive context engineering (improves output quality)
-5. Multi-sample with verifier (requires 1, big win for hard problems)
-6. OS-level sandboxing (enables autonomous operation)
-7. Git-native auto-checkpointing (safety + audit trail)
-8. Cost tracking in USD (user trust)
-9. Architect/editor split (optimization, can come later)
+| # | Priority | Status |
+|---|----------|--------|
+| 1 | Compiler-in-the-loop verification | ✅ Done |
+| 2 | Loop detection + budget enforcement | ✅ Done |
+| 3 | Multi-sample with verifier | ✅ Done |
+| 4 | Plan/act modal separation | ✅ Done |
+| 5 | Aggressive context engineering | Partial (50% compaction threshold) |
+| 6 | OS-level sandboxing | ✅ Done |
+| 7 | Git-native auto-checkpointing | ✅ Done |
+| 8 | USD cost tracking | ✅ Done |
+| 9 | Architect/editor split | Deferred |
+
+Remaining work for priority 5: subagent delegation, AST-aware repo map
+with tree-sitter, pre-computed cross-file context (SpecAgent approach).
+
+Priority 9 (architect/editor split) is an optimization that can come
+later when we have data on edit failure rates.
