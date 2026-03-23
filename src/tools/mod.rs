@@ -38,6 +38,17 @@ pub fn definitions() -> Vec<ToolDef> {
     ]
 }
 
+/// Return read-only tool definitions (for plan mode).
+pub fn read_only_definitions() -> Vec<ToolDef> {
+    vec![
+        read_file::definition(),
+        list_files::definition(),
+        glob::definition(),
+        grep::definition(),
+        web_search::definition(),
+    ]
+}
+
 /// Execute a named tool with the given input. Returns the output string.
 pub async fn execute(
     tool_name: &str,

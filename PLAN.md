@@ -66,7 +66,7 @@ outperforms single-shot generation.
 **Current state:** Not implemented. Requires the compiler-in-the-loop
 infrastructure from Priority 1.
 
-## Priority 4: Plan/act modal separation
+## Priority 4: Plan/act modal separation ✅
 
 Explicit read-only exploration mode vs execution mode. Prevents the
 "agent goes rogue" failure mode — the most emotionally charged user

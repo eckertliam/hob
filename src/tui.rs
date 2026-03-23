@@ -86,6 +86,8 @@ struct App {
     leader_pending: bool,
     /// Pending image attachment (media_type, base64 data).
     pending_image: Option<(String, String)>,
+    /// Whether the next task should run in plan (read-only) mode.
+    plan_mode: bool,
 }
 
 impl App {
@@ -112,6 +114,7 @@ impl App {
                 .unwrap_or_else(|| "default".into()),
             leader_pending: false,
             pending_image: None,
+            plan_mode: false,
         }
     }
 
@@ -366,6 +369,20 @@ impl App {
                 }
                 true
             }
+            Some("/plan") => {
+                self.plan_mode = true;
+                self.chat.push(ChatLine::System(
+                    "Plan mode: read-only. Agent will explore and produce a plan without modifying files.".into(),
+                ));
+                true
+            }
+            Some("/act") => {
+                self.plan_mode = false;
+                self.chat.push(ChatLine::System(
+                    "Act mode: full access. Agent can read, write, edit, and run commands.".into(),
+                ));
+                true
+            }
             Some("/image") => {
                 if let Some(path) = parts.get(1) {
                     match std::fs::read(path) {
@@ -448,6 +465,8 @@ impl App {
                      /key anthropic|openai <key> — save API key\n  \
                      /sessions                — list recent sessions\n  \
                      /resume <n>              — resume session n from /sessions\n  \
+                     /plan                    — switch to read-only plan mode\n  \
+                     /act                     — switch to full execution mode\n  \
                      /image <path>            — attach image to next prompt\n  \
                      /theme [name]            — show or set theme\n  \
                      /undo                    — revert file changes\n  \
@@ -585,7 +604,7 @@ fn spawn_agent_handler(
 
         while let Some(action) = action_rx.0.recv().await {
             match action {
-                UserAction::Task { id, prompt, image } => {
+                UserAction::Task { id, prompt, image, plan_mode } => {
                     let token = CancellationToken::new();
                     cancel = Some(token.clone());
 
@@ -597,7 +616,7 @@ fn spawn_agent_handler(
 
                     tokio::spawn(async move {
                         if let Err(e) = crate::agent::run_task(
-                            &*p, &m, id.clone(), prompt, image, token, &s, &pp, &u,
+                            &*p, &m, id.clone(), prompt, image, plan_mode, token, &s, &pp, &u,
                         )
                         .await
                         {
@@ -839,6 +858,7 @@ async fn run_ui_loop(
                                             id,
                                             prompt: input,
                                             image: app.pending_image.take(),
+                                            plan_mode: app.plan_mode,
                                         })
                                         .await;
                                 }
@@ -992,7 +1012,7 @@ async fn run_ui_loop(
                             if app.input.starts_with('/') {
                                 let commands = [
                                     "/model", "/provider", "/key", "/sessions",
-                                    "/resume", "/image", "/theme", "/undo", "/copy", "/clear", "/help",
+                                    "/plan", "/act", "/resume", "/image", "/theme", "/undo", "/copy", "/clear", "/help",
                                 ];
                                 let matches: Vec<&&str> = commands
                                     .iter()
@@ -1362,7 +1382,8 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
     } else if app.current_task.is_some() {
         format!(" {} ● streaming... ", app.model)
     } else {
-        format!(" {} > ", app.model)
+        let mode = if app.plan_mode { "plan" } else { "act" };
+        format!(" {} [{}] > ", app.model, mode)
     };
     let input = Paragraph::new(app.input.as_str())
         .block(

@@ -38,6 +38,7 @@ pub async fn run_task(
     task_id: String,
     prompt: String,
     image: Option<(String, String)>,
+    plan_mode: bool,
     cancel: CancellationToken,
     store: &Store,
     pending_permissions: &PendingMap,
@@ -58,8 +59,23 @@ pub async fn run_task(
         .and_then(|cwd| Snapshots::new(&cwd).ok());
     let initial_snapshot = snapshots.as_ref().and_then(|s| s.track().ok());
 
-    let system = prompt::build_system_prompt(model);
-    let tool_defs = tools::definitions();
+    let mut system = prompt::build_system_prompt(model);
+    let tool_defs = if plan_mode {
+        system.push_str(
+            "\n\n# Mode: PLAN\n\
+             You are in read-only planning mode. You MUST NOT modify any files.\n\
+             Explore the codebase, understand the problem, and produce a structured plan.\n\
+             Use this format:\n\
+             ## Plan\n\
+             1. [file] — description of change\n\
+             2. [file] — description of change\n\
+             ...\n\
+             Do NOT write code. Describe what to change and why."
+        );
+        tools::read_only_definitions()
+    } else {
+        tools::definitions()
+    };
     let default_rules = permission::default_rules();
     let mut session_rules: Vec<Rule> = Vec::new();
 

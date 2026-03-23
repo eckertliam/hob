@@ -50,6 +50,7 @@ pub enum UserAction {
         id: String,
         prompt: String,
         image: Option<(String, String)>, // (media_type, base64_data)
+        plan_mode: bool,
     },
     /// Cancel the current task.
     Cancel { id: String },
