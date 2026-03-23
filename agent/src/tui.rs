@@ -216,6 +216,116 @@ impl App {
                 }
                 true
             }
+            Some("/resume") => {
+                if let Some(idx_str) = parts.get(1) {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        match self.store.list_sessions().await {
+                            Ok(sessions) => {
+                                if idx == 0 || idx > sessions.len() {
+                                    self.chat.push(ChatLine::System(
+                                        format!("Invalid session number. Use 1-{}", sessions.len()),
+                                    ));
+                                } else {
+                                    let session = &sessions[idx - 1];
+                                    match self.store.load_messages(&session.id).await {
+                                        Ok(Some(messages)) => {
+                                            self.chat.clear();
+                                            self.total_input_tokens = 0;
+                                            self.total_output_tokens = 0;
+                                            let title = if session.title.is_empty() {
+                                                "(untitled)"
+                                            } else {
+                                                &session.title
+                                            };
+                                            self.chat.push(ChatLine::System(
+                                                format!("Resumed session: {title}"),
+                                            ));
+                                            self.chat.push(ChatLine::Separator);
+                                            // Replay messages into chat
+                                            for msg in &messages {
+                                                match msg {
+                                                    crate::api::Message::User { content } => {
+                                                        self.chat.push(ChatLine::UserHeader);
+                                                        for block in content {
+                                                            if let crate::api::ContentBlock::Text { text } = block {
+                                                                self.chat.push(ChatLine::UserText(text.clone()));
+                                                            }
+                                                        }
+                                                    }
+                                                    crate::api::Message::Assistant { content } => {
+                                                        self.chat.push(ChatLine::AssistantHeader);
+                                                        for block in content {
+                                                            match block {
+                                                                crate::api::ContentBlock::Text { text } => {
+                                                                    self.chat.push(ChatLine::AssistantText(text.clone()));
+                                                                }
+                                                                crate::api::ContentBlock::ToolUse { name, .. } => {
+                                                                    self.chat.push(ChatLine::ToolCall(name.clone()));
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            self.chat.push(ChatLine::Separator);
+                                            // Return the session ID so the agent can continue
+                                            return true;
+                                        }
+                                        Ok(None) => {
+                                            self.chat.push(ChatLine::System(
+                                                "Session has no messages.".into(),
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            self.chat.push(ChatLine::System(
+                                                format!("Error loading session: {e}"),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.chat.push(ChatLine::System(format!("Error: {e}")));
+                            }
+                        }
+                    } else {
+                        self.chat.push(ChatLine::System(
+                            "Usage: /resume <number> (from /sessions list)".into(),
+                        ));
+                    }
+                } else {
+                    self.chat.push(ChatLine::System(
+                        "Usage: /resume <number> (run /sessions first)".into(),
+                    ));
+                }
+                true
+            }
+            Some("/copy") => {
+                // Find the last assistant text
+                let last_text: Option<String> = self.chat.iter().rev().find_map(|line| {
+                    if let ChatLine::AssistantText(text) = line {
+                        Some(text.clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(text) = last_text {
+                    match copy_to_clipboard(&text) {
+                        Ok(()) => {
+                            self.chat.push(ChatLine::System("Copied to clipboard.".into()));
+                        }
+                        Err(e) => {
+                            self.chat
+                                .push(ChatLine::System(format!("Copy failed: {e}")));
+                        }
+                    }
+                } else {
+                    self.chat
+                        .push(ChatLine::System("No assistant response to copy.".into()));
+                }
+                true
+            }
             Some("/clear") => {
                 self.chat.clear();
                 self.total_input_tokens = 0;
@@ -229,7 +339,9 @@ impl App {
                      /provider anthropic|openai — set provider\n  \
                      /key anthropic|openai <key> — save API key\n  \
                      /sessions                — list recent sessions\n  \
+                     /resume <n>              — resume session n from /sessions\n  \
                      /clear                   — clear chat history\n  \
+                     /copy                    — copy last response to clipboard\n  \
                      /help                    — show this help"
                         .into(),
                 ));
@@ -651,6 +763,27 @@ async fn run_ui_loop(
                                 app.cursor = app.input.len();
                             }
                         }
+                        // Ctrl+Y: copy last response
+                        KeyEvent {
+                            code: KeyCode::Char('y'),
+                            modifiers: KeyModifiers::CONTROL,
+                            ..
+                        } => {
+                            let last_text: Option<String> = app.chat.iter().rev().find_map(|line| {
+                                if let ChatLine::AssistantText(text) = line {
+                                    Some(text.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                            if let Some(text) = last_text {
+                                if let Err(e) = copy_to_clipboard(&text) {
+                                    app.chat.push(ChatLine::System(format!("Copy failed: {e}")));
+                                } else {
+                                    app.chat.push(ChatLine::System("Copied to clipboard.".into()));
+                                }
+                            }
+                        }
                         // Ctrl+L: clear screen / redraw
                         KeyEvent {
                             code: KeyCode::Char('l'),
@@ -834,6 +967,57 @@ async fn run_ui_loop(
             }
         }
     }
+}
+
+/// Copy text to clipboard using platform-specific tools + OSC 52 fallback.
+fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // Try platform-specific first
+    #[cfg(target_os = "macos")]
+    {
+        let mut child = Command::new("pbcopy")
+            .stdin(Stdio::piped())
+            .spawn()?;
+        if let Some(ref mut stdin) = child.stdin {
+            stdin.write_all(text.as_bytes())?;
+        }
+        child.wait()?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try wl-copy (Wayland) then xclip (X11)
+        let result = Command::new("wl-copy")
+            .stdin(Stdio::piped())
+            .spawn()
+            .or_else(|_| {
+                Command::new("xclip")
+                    .args(["-selection", "clipboard"])
+                    .stdin(Stdio::piped())
+                    .spawn()
+            });
+        if let Ok(mut child) = result {
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(text.as_bytes())?;
+            }
+            child.wait()?;
+            return Ok(());
+        }
+    }
+
+    // OSC 52 fallback (works over SSH if terminal supports it)
+    {
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+        let mut stdout = std::io::stdout();
+        write!(stdout, "\x1b]52;c;{encoded}\x07")?;
+        stdout.flush()?;
+    }
+
+    Ok(())
 }
 
 fn git_branch() -> Option<String> {
