@@ -45,23 +45,18 @@ pub async fn run_task(
         tracing::warn!("failed to create session: {e}");
     }
 
-    // Auto-generate title from first 50 chars of prompt
-    let title: String = prompt.chars().take(50).collect();
-    let title = title.lines().next().unwrap_or(&title).to_string();
-    if let Err(e) = store.update_title(&task_id, &title).await {
-        tracing::warn!("failed to set session title: {e}");
-    }
-
     let system = prompt::build_system_prompt(model);
     let tool_defs = tools::definitions();
     let default_rules = permission::default_rules();
     let mut session_rules: Vec<Rule> = Vec::new();
 
+    let prompt_for_title = prompt.clone();
     let mut messages = vec![Message::User {
         content: vec![ContentBlock::Text { text: prompt }],
     }];
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
+    let mut step: u32 = 0;
 
     loop {
         if cancel.is_cancelled() {
@@ -82,10 +77,18 @@ pub async fn run_task(
         )
         .await?;
 
+        step += 1;
+
         // Accumulate token usage
         if let Some(ref u) = usage {
             total_input_tokens += u.input_tokens;
             total_output_tokens += u.output_tokens;
+        }
+
+        // Set title on first step from the prompt
+        if step == 1 {
+            let title = generate_title_from_prompt(&prompt_for_title);
+            let _ = store.update_title(&task_id, &title).await;
         }
 
         // Check if compaction is needed
@@ -360,6 +363,25 @@ fn extract_tool_calls(messages: &[Message]) -> Vec<(String, String, serde_json::
         .collect()
 }
 
+/// Generate a short title from the user's prompt.
+/// Takes first line, removes articles, caps at 50 chars.
+fn generate_title_from_prompt(prompt: &str) -> String {
+    let first_line = prompt.lines().next().unwrap_or(prompt);
+    let cleaned: String = first_line
+        .split_whitespace()
+        .filter(|w| !matches!(w.to_lowercase().as_str(), "the" | "a" | "an" | "this" | "my" | "please" | "can" | "you"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut title: String = cleaned.chars().take(50).collect();
+    if cleaned.len() > 50 {
+        title.push_str("...");
+    }
+    if title.is_empty() {
+        title = "untitled".to_string();
+    }
+    title
+}
+
 async fn send_cancelled(task_id: &str, ui: &EventSender) {
     info!("task {task_id} cancelled");
     ui.send(UiEvent::Error {
@@ -367,4 +389,43 @@ async fn send_cancelled(task_id: &str, ui: &EventSender) {
         message: "cancelled".into(),
     })
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_title_removes_articles() {
+        assert_eq!(
+            generate_title_from_prompt("Fix the bug in the auth module"),
+            "Fix bug in auth module"
+        );
+    }
+
+    #[test]
+    fn test_title_caps_at_50() {
+        let long = "Implement a comprehensive refactoring of the entire authentication and authorization subsystem";
+        let title = generate_title_from_prompt(long);
+        assert!(title.len() <= 53); // 50 + "..."
+        assert!(title.ends_with("..."));
+    }
+
+    #[test]
+    fn test_title_first_line_only() {
+        assert_eq!(
+            generate_title_from_prompt("Fix tests\nAlso refactor the module"),
+            "Fix tests"
+        );
+    }
+
+    #[test]
+    fn test_title_empty_prompt() {
+        assert_eq!(generate_title_from_prompt(""), "untitled");
+    }
+
+    #[test]
+    fn test_title_all_articles() {
+        assert_eq!(generate_title_from_prompt("the a an"), "untitled");
+    }
 }
