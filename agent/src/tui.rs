@@ -616,6 +616,33 @@ async fn run_ui_loop(
                                 app.cursor = app.input.len();
                             }
                         }
+                        // Ctrl+L: clear screen / redraw
+                        KeyEvent {
+                            code: KeyCode::Char('l'),
+                            modifiers: KeyModifiers::CONTROL,
+                            ..
+                        } => {
+                            terminal.clear()?;
+                        }
+                        // Tab: complete slash commands
+                        KeyEvent {
+                            code: KeyCode::Tab, ..
+                        } => {
+                            if app.input.starts_with('/') {
+                                let commands = [
+                                    "/model", "/provider", "/key", "/sessions",
+                                    "/clear", "/help",
+                                ];
+                                let matches: Vec<&&str> = commands
+                                    .iter()
+                                    .filter(|c| c.starts_with(app.input.as_str()))
+                                    .collect();
+                                if matches.len() == 1 {
+                                    app.input = format!("{} ", matches[0]);
+                                    app.cursor = app.input.len();
+                                }
+                            }
+                        }
                         // Scroll
                         KeyEvent {
                             code: KeyCode::PageUp,
