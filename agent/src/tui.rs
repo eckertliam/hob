@@ -980,10 +980,12 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
     f.render_widget(status, chunks[1]);
 
     // Input area
-    let input_title = if app.current_task.is_some() {
-        " (streaming...) "
+    let input_title = if app.pending_permission.is_some() {
+        " ⚠ permission required — press y/!/n ".to_string()
+    } else if app.current_task.is_some() {
+        format!(" {} ● streaming... ", app.model)
     } else {
-        " > "
+        format!(" {} > ", app.model)
     };
     let input = Paragraph::new(app.input.as_str())
         .block(
