@@ -10,7 +10,7 @@ engineering, and tool design. Identical models score 17 percentage points
 apart on SWE-bench Pro depending on the harness. hob wins by building
 the tightest possible loop between LLM generation and compiler feedback.
 
-## Priority 1: Compiler-in-the-loop verification
+## Priority 1: Compiler-in-the-loop verification ✅
 
 The single biggest architectural advantage. No shipping agent treats
 compilation and static analysis as real-time feedback during generation.
@@ -33,7 +33,7 @@ They compile after generating, then retry.
 **Current state:** Basic LSP diagnostics appended to tool output. Needs
 to become a core feedback loop, not an afterthought.
 
-## Priority 2: Deterministic loop detection and budget enforcement
+## Priority 2: Deterministic loop detection and budget enforcement ✅
 
 The "loop of death" is the most wasteful failure mode across all agents.
 No shipping agent has robust detection or per-subtask budget enforcement.

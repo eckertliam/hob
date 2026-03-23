@@ -19,6 +19,11 @@ use crate::snapshot::Snapshots;
 use crate::store::Store;
 use crate::tools;
 
+/// Maximum output tokens per task before forced wrap-up.
+const MAX_TASK_OUTPUT_TOKENS: u32 = 500_000;
+/// Warning threshold (80% of max).
+const TOKEN_BUDGET_WARNING: u32 = MAX_TASK_OUTPUT_TOKENS * 80 / 100;
+
 /// A tool call being accumulated from the stream.
 struct PendingToolCall {
     id: String,
@@ -69,6 +74,7 @@ pub async fn run_task(
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
     let mut step: u32 = 0;
+    let mut recent_tool_calls: Vec<(String, String)> = Vec::new(); // (tool_name, args_hash)
 
     loop {
         if cancel.is_cancelled() {
@@ -103,6 +109,19 @@ pub async fn run_task(
             let _ = store.update_title(&task_id, &title).await;
         }
 
+        // Token budget enforcement
+        if total_output_tokens > MAX_TASK_OUTPUT_TOKENS {
+            info!("task {task_id}: token budget exhausted ({total_output_tokens} output tokens)");
+            ui.send(UiEvent::Status {
+                id: task_id.clone(),
+                message: "Token budget exhausted. Wrapping up.".into(),
+            })
+            .await;
+            break;
+        } else if total_output_tokens > TOKEN_BUDGET_WARNING && step > 1 {
+            info!("task {task_id}: approaching token budget ({total_output_tokens}/{MAX_TASK_OUTPUT_TOKENS})");
+        }
+
         // Check if compaction is needed
         if let Some(ref u) = usage {
             if compaction::should_compact(u.input_tokens, model) {
@@ -133,6 +152,32 @@ pub async fn run_task(
                 let tool_calls = extract_tool_calls(&messages);
                 if tool_calls.is_empty() {
                     info!("task {task_id}: tool_use stop reason but no tool calls found");
+                    break;
+                }
+
+                // Loop detection: check for repeated identical tool calls
+                let mut doom_loop = false;
+                for (_call_id, tool_name, input) in &tool_calls {
+                    let args_hash = format!("{}:{}", tool_name, input);
+                    recent_tool_calls.push((tool_name.clone(), args_hash));
+                }
+                if recent_tool_calls.len() >= 3 {
+                    let last = &recent_tool_calls[recent_tool_calls.len() - 1];
+                    let prev1 = &recent_tool_calls[recent_tool_calls.len() - 2];
+                    let prev2 = &recent_tool_calls[recent_tool_calls.len() - 3];
+                    if last.1 == prev1.1 && prev1.1 == prev2.1 {
+                        doom_loop = true;
+                        info!(
+                            "task {task_id}: doom loop detected — {} called 3x with same args",
+                            last.0
+                        );
+                    }
+                }
+                if doom_loop {
+                    ui.send(UiEvent::Error {
+                        id: task_id.clone(),
+                        message: "Loop detected: same tool called 3x with identical args. Stopping to avoid wasting tokens.".into(),
+                    }).await;
                     break;
                 }
 
@@ -209,6 +254,44 @@ pub async fn run_task(
                         content: output,
                         is_error,
                     });
+                }
+
+                // Compiler-in-the-loop: if any tools modified files, run a
+                // build check and inject diagnostics so the agent can fix
+                // errors in the same turn.
+                let tool_names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
+                if crate::lsp::modifies_files(&tool_names) {
+                    let (build_ok, diags) = crate::lsp::check_project();
+                    if !build_ok && !diags.is_empty() {
+                        let diag_text = format!(
+                            "Build check FAILED after your edits. Fix these errors:\n{}",
+                            diags.join("\n")
+                        );
+                        info!("task {task_id}: build failed, injecting {} diagnostics", diags.len());
+                        results.push(ContentBlock::ToolResult {
+                            tool_use_id: "build-check".into(),
+                            content: diag_text,
+                            is_error: true,
+                        });
+                        ui.send(UiEvent::ToolResult {
+                            id: task_id.clone(),
+                            tool: "build_check".into(),
+                            output: format!("{} errors found", diags.len()),
+                            is_error: true,
+                        })
+                        .await;
+                    } else if !diags.is_empty() {
+                        // Warnings only
+                        let warn_text = format!(
+                            "Build passed with warnings:\n{}",
+                            diags.join("\n")
+                        );
+                        results.push(ContentBlock::ToolResult {
+                            tool_use_id: "build-check".into(),
+                            content: warn_text,
+                            is_error: false,
+                        });
+                    }
                 }
 
                 messages.push(Message::User { content: results });
@@ -439,5 +522,38 @@ mod tests {
     #[test]
     fn test_title_all_articles() {
         assert_eq!(generate_title_from_prompt("the a an"), "untitled");
+    }
+
+    #[test]
+    fn test_doom_loop_detection() {
+        let mut recent: Vec<(String, String)> = Vec::new();
+        let call = ("read_file".to_string(), "read_file:{\"path\":\"foo.rs\"}".to_string());
+        recent.push(call.clone());
+        recent.push(call.clone());
+        recent.push(call.clone());
+
+        let last = &recent[recent.len() - 1];
+        let prev1 = &recent[recent.len() - 2];
+        let prev2 = &recent[recent.len() - 3];
+        assert_eq!(last.1, prev1.1);
+        assert_eq!(prev1.1, prev2.1);
+    }
+
+    #[test]
+    fn test_no_doom_loop_different_args() {
+        let recent = vec![
+            ("read_file".to_string(), "read_file:{\"path\":\"a.rs\"}".to_string()),
+            ("read_file".to_string(), "read_file:{\"path\":\"b.rs\"}".to_string()),
+            ("read_file".to_string(), "read_file:{\"path\":\"c.rs\"}".to_string()),
+        ];
+        let last = &recent[recent.len() - 1];
+        let prev1 = &recent[recent.len() - 2];
+        assert_ne!(last.1, prev1.1);
+    }
+
+    #[test]
+    fn test_token_budget_constants() {
+        assert!(TOKEN_BUDGET_WARNING < MAX_TASK_OUTPUT_TOKENS);
+        assert_eq!(TOKEN_BUDGET_WARNING, MAX_TASK_OUTPUT_TOKENS * 80 / 100);
     }
 }
