@@ -49,11 +49,14 @@ pub async fn execute(input: Value) -> Result<String> {
 
     let (new_content, method) = apply_edit(&content, &params.old_text, &params.new_text)?;
 
+    // Generate a simple unified diff
+    let diff = unified_diff(&content, &new_content, &params.path);
+
     tokio::fs::write(&params.path, &new_content)
         .await
         .with_context(|| format!("failed to write file: {}", params.path))?;
 
-    Ok(format!("Edited {} (matched via {method})", params.path))
+    Ok(format!("Edited {} (matched via {method})\n\n{diff}", params.path))
 }
 
 /// Try to apply the edit using a cascade of matching strategies.
@@ -248,6 +251,76 @@ fn context_anchored_replace(content: &str, old_text: &str, new_text: &str) -> Op
         result.pop();
     }
     Some(result)
+}
+
+/// Generate a simple unified diff between old and new content.
+fn unified_diff(old: &str, new: &str, path: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let mut output = format!("--- a/{path}\n+++ b/{path}\n");
+
+    // Find changed regions by comparing lines
+    let max = old_lines.len().max(new_lines.len());
+    let mut i = 0;
+    while i < max {
+        // Skip matching lines
+        if i < old_lines.len() && i < new_lines.len() && old_lines[i] == new_lines[i] {
+            i += 1;
+            continue;
+        }
+        // Found a difference — show context
+        let start = i.saturating_sub(2);
+        // Find end of diff region
+        let mut end = i;
+        while end < max {
+            if end < old_lines.len() && end < new_lines.len() && old_lines[end] == new_lines[end] {
+                // Check if the next few lines also match (end of hunk)
+                let mut matching = 0;
+                for j in end..max.min(end + 3) {
+                    if j < old_lines.len() && j < new_lines.len() && old_lines[j] == new_lines[j] {
+                        matching += 1;
+                    }
+                }
+                if matching >= 3 {
+                    break;
+                }
+            }
+            end += 1;
+        }
+        let ctx_end = (end + 2).min(max);
+
+        output.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            start + 1,
+            ctx_end.min(old_lines.len()).saturating_sub(start),
+            start + 1,
+            ctx_end.min(new_lines.len()).saturating_sub(start),
+        ));
+
+        for j in start..ctx_end {
+            let in_old = j < old_lines.len();
+            let in_new = j < new_lines.len();
+            if in_old && in_new && old_lines[j] == new_lines[j] {
+                output.push_str(&format!(" {}\n", old_lines[j]));
+            } else {
+                if in_old && (j >= old_lines.len() || !in_new || old_lines[j] != *new_lines.get(j).unwrap_or(&"")) {
+                    output.push_str(&format!("-{}\n", old_lines[j]));
+                }
+                if in_new && (j >= new_lines.len() || !in_old || new_lines[j] != *old_lines.get(j).unwrap_or(&"")) {
+                    output.push_str(&format!("+{}\n", new_lines[j]));
+                }
+            }
+        }
+
+        i = ctx_end;
+    }
+
+    if output.lines().count() <= 2 {
+        // No diff lines generated, files are identical
+        return String::new();
+    }
+
+    output
 }
 
 #[cfg(test)]

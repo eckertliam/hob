@@ -39,6 +39,8 @@ pub fn tool_permission(tool_name: &str) -> &'static str {
         "read_file" | "list_files" | "glob" | "grep" => "read",
         "write_file" | "edit_file" => "edit",
         "shell" => "bash",
+        "web_fetch" => "webfetch",
+        "web_search" => "websearch",
         _ => "unknown",
     }
 }
@@ -66,6 +68,16 @@ pub fn tool_resource(tool_name: &str, input: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("*")
             .to_string(),
+        "web_fetch" => input
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string(),
+        "web_search" => input
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string(),
         _ => "*".to_string(),
     }
 }
@@ -87,6 +99,16 @@ pub fn default_rules() -> Vec<Rule> {
             permission: "edit".into(),
             pattern: "*".into(),
             action: Action::Ask,
+        },
+        Rule {
+            permission: "webfetch".into(),
+            pattern: "*".into(),
+            action: Action::Ask,
+        },
+        Rule {
+            permission: "websearch".into(),
+            pattern: "*".into(),
+            action: Action::Allow,
         },
         Rule {
             permission: "unknown".into(),

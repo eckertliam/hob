@@ -10,6 +10,8 @@ pub mod grep;
 pub mod list_files;
 pub mod read_file;
 pub mod shell;
+pub mod web_fetch;
+pub mod web_search;
 pub mod write_file;
 
 use anyhow::Result;
@@ -31,6 +33,8 @@ pub fn definitions() -> Vec<ToolDef> {
         list_files::definition(),
         glob::definition(),
         grep::definition(),
+        web_fetch::definition(),
+        web_search::definition(),
     ]
 }
 
@@ -48,6 +52,8 @@ pub async fn execute(
         "list_files" => list_files::execute(input).await?,
         "glob" => glob::execute(input).await?,
         "grep" => grep::execute(input).await?,
+        "web_fetch" => web_fetch::execute(input).await?,
+        "web_search" => web_search::execute(input).await?,
         _ => anyhow::bail!("unknown tool: {tool_name}"),
     };
 
