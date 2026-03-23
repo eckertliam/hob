@@ -1,5 +1,7 @@
 # TODO
 
+All items from the original list are complete.
+
 - [x] LSP integration (diagnostics after edits)
 - [x] Syntax highlighting in code blocks
 - [x] Leader-key chord system (Ctrl+X prefix)
@@ -8,4 +10,4 @@
 - [x] Diff display for edit_file operations
 - [x] Web search tool
 - [x] Web fetch tool
-- [ ] Image paste/attachment support
+- [x] Image paste/attachment support

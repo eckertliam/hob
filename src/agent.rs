@@ -32,6 +32,7 @@ pub async fn run_task(
     model: &str,
     task_id: String,
     prompt: String,
+    image: Option<(String, String)>,
     cancel: CancellationToken,
     store: &Store,
     pending_permissions: &PendingMap,
@@ -58,8 +59,12 @@ pub async fn run_task(
     let mut session_rules: Vec<Rule> = Vec::new();
 
     let prompt_for_title = prompt.clone();
+    let mut user_content: Vec<ContentBlock> = vec![ContentBlock::Text { text: prompt }];
+    if let Some((media_type, data)) = image {
+        user_content.push(ContentBlock::Image { media_type, data });
+    }
     let mut messages = vec![Message::User {
-        content: vec![ContentBlock::Text { text: prompt }],
+        content: user_content,
     }];
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;

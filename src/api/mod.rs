@@ -78,6 +78,11 @@ pub enum Message {
 pub enum ContentBlock {
     /// Plain text.
     Text { text: String },
+    /// Base64-encoded image.
+    Image {
+        media_type: String,
+        data: String,
+    },
     /// A tool invocation (in assistant messages).
     ToolUse {
         id: String,

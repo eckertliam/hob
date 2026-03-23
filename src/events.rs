@@ -45,8 +45,12 @@ pub enum UiEvent {
 /// Actions sent from the TUI to the agent.
 #[derive(Debug, Clone)]
 pub enum UserAction {
-    /// Send a new prompt.
-    Task { id: String, prompt: String },
+    /// Send a new prompt, optionally with an image attachment.
+    Task {
+        id: String,
+        prompt: String,
+        image: Option<(String, String)>, // (media_type, base64_data)
+    },
     /// Cancel the current task.
     Cancel { id: String },
     /// Respond to a permission request.

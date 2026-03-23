@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::sse;
-use super::{Message, Provider, StopReason, StreamEvent, StreamRequest, ToolDef, Usage};
+use super::{ContentBlock, Message, Provider, StopReason, StreamEvent, StreamRequest, ToolDef, Usage};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
@@ -65,16 +65,38 @@ struct ApiErrorBody {
     message: String,
 }
 
+/// Convert a ContentBlock to Anthropic's wire format.
+fn content_block_to_anthropic(block: &ContentBlock) -> serde_json::Value {
+    match block {
+        ContentBlock::Image { media_type, data } => {
+            serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data
+                }
+            })
+        }
+        other => serde_json::to_value(other).unwrap_or_default(),
+    }
+}
+
 /// Convert our provider-agnostic messages into Anthropic wire format.
 fn convert_messages(messages: &[Message]) -> Result<Vec<ApiMessage>> {
     messages
         .iter()
         .map(|msg| match msg {
-            Message::User { content } => Ok(ApiMessage {
-                role: "user".into(),
-                content: serde_json::to_value(content)
-                    .context("failed to serialize user message content")?,
-            }),
+            Message::User { content } => {
+                let blocks: Vec<serde_json::Value> = content
+                    .iter()
+                    .map(content_block_to_anthropic)
+                    .collect();
+                Ok(ApiMessage {
+                    role: "user".into(),
+                    content: serde_json::Value::Array(blocks),
+                })
+            }
             Message::Assistant { content } => Ok(ApiMessage {
                 role: "assistant".into(),
                 content: serde_json::to_value(content)

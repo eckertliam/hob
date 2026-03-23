@@ -84,6 +84,8 @@ struct App {
     theme_name: String,
     /// True when Ctrl+X was pressed and we're waiting for the second key.
     leader_pending: bool,
+    /// Pending image attachment (media_type, base64 data).
+    pending_image: Option<(String, String)>,
 }
 
 impl App {
@@ -109,6 +111,7 @@ impl App {
                 .and_then(|c| c.theme)
                 .unwrap_or_else(|| "default".into()),
             leader_pending: false,
+            pending_image: None,
         }
     }
 
@@ -363,6 +366,38 @@ impl App {
                 }
                 true
             }
+            Some("/image") => {
+                if let Some(path) = parts.get(1) {
+                    match std::fs::read(path) {
+                        Ok(data) => {
+                            use base64::Engine;
+                            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                            let media_type = match std::path::Path::new(path)
+                                .extension()
+                                .and_then(|e| e.to_str())
+                            {
+                                Some("png") => "image/png",
+                                Some("jpg") | Some("jpeg") => "image/jpeg",
+                                Some("gif") => "image/gif",
+                                Some("webp") => "image/webp",
+                                _ => "image/png",
+                            };
+                            self.pending_image = Some((media_type.to_string(), encoded));
+                            self.chat.push(ChatLine::System(
+                                format!("Image attached: {path}. Send a prompt to include it."),
+                            ));
+                        }
+                        Err(e) => {
+                            self.chat.push(ChatLine::System(format!("Failed to read image: {e}")));
+                        }
+                    }
+                } else {
+                    self.chat.push(ChatLine::System(
+                        "Usage: /image <path-to-image>".into(),
+                    ));
+                }
+                true
+            }
             Some("/undo") => {
                 match crate::snapshot::Snapshots::new(
                     &std::env::current_dir().unwrap_or_default(),
@@ -413,6 +448,7 @@ impl App {
                      /key anthropic|openai <key> — save API key\n  \
                      /sessions                — list recent sessions\n  \
                      /resume <n>              — resume session n from /sessions\n  \
+                     /image <path>            — attach image to next prompt\n  \
                      /theme [name]            — show or set theme\n  \
                      /undo                    — revert file changes\n  \
                      /copy                    — copy last response to clipboard\n  \
@@ -549,7 +585,7 @@ fn spawn_agent_handler(
 
         while let Some(action) = action_rx.0.recv().await {
             match action {
-                UserAction::Task { id, prompt } => {
+                UserAction::Task { id, prompt, image } => {
                     let token = CancellationToken::new();
                     cancel = Some(token.clone());
 
@@ -561,7 +597,7 @@ fn spawn_agent_handler(
 
                     tokio::spawn(async move {
                         if let Err(e) = crate::agent::run_task(
-                            &*p, &m, id.clone(), prompt, token, &s, &pp, &u,
+                            &*p, &m, id.clone(), prompt, image, token, &s, &pp, &u,
                         )
                         .await
                         {
@@ -799,7 +835,11 @@ async fn run_ui_loop(
                                     app.chat.push(ChatLine::AssistantHeader);
 
                                     action_tx
-                                        .send(UserAction::Task { id, prompt: input })
+                                        .send(UserAction::Task {
+                                            id,
+                                            prompt: input,
+                                            image: app.pending_image.take(),
+                                        })
                                         .await;
                                 }
                             }
@@ -952,7 +992,7 @@ async fn run_ui_loop(
                             if app.input.starts_with('/') {
                                 let commands = [
                                     "/model", "/provider", "/key", "/sessions",
-                                    "/resume", "/theme", "/undo", "/copy", "/clear", "/help",
+                                    "/resume", "/image", "/theme", "/undo", "/copy", "/clear", "/help",
                                 ];
                                 let matches: Vec<&&str> = commands
                                     .iter()
