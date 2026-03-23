@@ -7,6 +7,7 @@ mod events;
 mod models;
 mod permission;
 mod prompt;
+mod snapshot;
 mod store;
 mod tools;
 mod tui;

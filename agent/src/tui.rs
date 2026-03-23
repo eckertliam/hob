@@ -326,6 +326,42 @@ impl App {
                 }
                 true
             }
+            Some("/undo") => {
+                match crate::snapshot::Snapshots::new(
+                    &std::env::current_dir().unwrap_or_default(),
+                ) {
+                    Ok(snaps) => {
+                        if let Ok(hash) = snaps.track() {
+                            // Find changed files since initial state (empty tree)
+                            match snaps.changed_files(&hash) {
+                                Ok(files) if !files.is_empty() => {
+                                    match snaps.restore(&hash) {
+                                        Ok(()) => {
+                                            self.chat.push(ChatLine::System(
+                                                format!("Reverted {} files.", files.len()),
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            self.chat.push(ChatLine::System(
+                                                format!("Undo failed: {e}"),
+                                            ));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    self.chat.push(ChatLine::System(
+                                        "Nothing to undo.".into(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.chat.push(ChatLine::System(format!("Undo unavailable: {e}")));
+                    }
+                }
+                true
+            }
             Some("/clear") => {
                 self.chat.clear();
                 self.total_input_tokens = 0;
@@ -340,8 +376,9 @@ impl App {
                      /key anthropic|openai <key> — save API key\n  \
                      /sessions                — list recent sessions\n  \
                      /resume <n>              — resume session n from /sessions\n  \
-                     /clear                   — clear chat history\n  \
+                     /undo                    — revert file changes\n  \
                      /copy                    — copy last response to clipboard\n  \
+                     /clear                   — clear chat history\n  \
                      /help                    — show this help"
                         .into(),
                 ));
@@ -799,7 +836,7 @@ async fn run_ui_loop(
                             if app.input.starts_with('/') {
                                 let commands = [
                                     "/model", "/provider", "/key", "/sessions",
-                                    "/clear", "/help",
+                                    "/resume", "/undo", "/copy", "/clear", "/help",
                                 ];
                                 let matches: Vec<&&str> = commands
                                     .iter()

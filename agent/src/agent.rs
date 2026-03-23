@@ -15,6 +15,7 @@ use crate::error::{self, ClassifiedError};
 use crate::events::{EventSender, UiEvent};
 use crate::permission::{self, Action, PendingMap, Rule};
 use crate::prompt;
+use crate::snapshot::Snapshots;
 use crate::store::Store;
 use crate::tools;
 
@@ -44,6 +45,12 @@ pub async fn run_task(
     if let Err(e) = store.create_session(&task_id, &cwd).await {
         tracing::warn!("failed to create session: {e}");
     }
+
+    // Initialize snapshot system for undo support
+    let snapshots = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| Snapshots::new(&cwd).ok());
+    let initial_snapshot = snapshots.as_ref().and_then(|s| s.track().ok());
 
     let system = prompt::build_system_prompt(model);
     let tool_defs = tools::definitions();
