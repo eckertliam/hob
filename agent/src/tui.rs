@@ -577,15 +577,50 @@ async fn run_ui_loop(
                                 app.cursor += 1;
                             }
                         }
-                        // Home/End
+                        // Home / Ctrl+A
                         KeyEvent {
-                            code: KeyCode::Home,
+                            code: KeyCode::Home, ..
+                        }
+                        | KeyEvent {
+                            code: KeyCode::Char('a'),
+                            modifiers: KeyModifiers::CONTROL,
                             ..
                         } => app.cursor = 0,
+                        // End / Ctrl+E
                         KeyEvent {
-                            code: KeyCode::End,
+                            code: KeyCode::End, ..
+                        }
+                        | KeyEvent {
+                            code: KeyCode::Char('e'),
+                            modifiers: KeyModifiers::CONTROL,
                             ..
                         } => app.cursor = app.input.len(),
+                        // Ctrl+U: clear input
+                        KeyEvent {
+                            code: KeyCode::Char('u'),
+                            modifiers: KeyModifiers::CONTROL,
+                            ..
+                        } => {
+                            app.input.clear();
+                            app.cursor = 0;
+                        }
+                        // Ctrl+W: delete word backwards
+                        KeyEvent {
+                            code: KeyCode::Char('w'),
+                            modifiers: KeyModifiers::CONTROL,
+                            ..
+                        } => {
+                            let cur = app.cursor;
+                            if cur > 0 {
+                                let before: String = app.input[..cur].to_string();
+                                let trimmed = before.trim_end();
+                                let new_end = trimmed.rfind(' ')
+                                    .map(|i| i + 1)
+                                    .unwrap_or(0);
+                                app.input.drain(new_end..cur);
+                                app.cursor = new_end;
+                            }
+                        }
                         // Up/Down: input history
                         KeyEvent {
                             code: KeyCode::Up, ..
