@@ -278,8 +278,15 @@ impl App {
     }
 
     fn chat_line_count(&self) -> usize {
-        // Rough estimate — each ChatLine is at least one terminal line
-        self.chat.len()
+        self.chat
+            .iter()
+            .map(|line| match line {
+                ChatLine::AssistantText(t) | ChatLine::UserText(t) | ChatLine::System(t) => {
+                    t.lines().count().max(1)
+                }
+                _ => 1,
+            })
+            .sum()
     }
 }
 
@@ -410,6 +417,18 @@ async fn run_ui_loop(
     store: Store,
 ) -> anyhow::Result<()> {
     let app = Arc::new(Mutex::new(App::new(model, store)));
+
+    // Show welcome message
+    {
+        let mut app = app.lock().await;
+        app.chat.push(ChatLine::System(
+            "hob — terminal AI coding agent\n\
+             Type a prompt and press Enter. /help for commands.\n\
+             Escape to cancel, Ctrl-C to quit."
+                .into(),
+        ));
+        app.chat.push(ChatLine::Separator);
+    }
 
     loop {
         // Draw
