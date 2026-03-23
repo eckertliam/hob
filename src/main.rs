@@ -9,6 +9,7 @@ mod lsp;
 mod models;
 mod permission;
 mod prompt;
+mod sandbox;
 mod snapshot;
 mod store;
 mod theme;

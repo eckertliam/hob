@@ -104,7 +104,7 @@ tokens of useful capacity.
 near the limit, not at optimal utilization. No subagent delegation,
 no AST-aware repo map, no pre-computed context.
 
-## Priority 6: OS-level sandboxing
+## Priority 6: OS-level sandboxing ✅
 
 Enable autonomous operation without per-step approval prompts. This is
 ~500 lines of Rust and dramatically changes the trust model.
