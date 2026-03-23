@@ -84,11 +84,14 @@ complaint across all coding agents.
 **Current state:** Not implemented. The permission system provides some
 safety but doesn't enforce a planning phase.
 
-## Priority 5: Aggressive context engineering
+## Priority 5: Aggressive context engineering (partial ✅)
 
 Target 40-60% context utilization. Beyond ~40% fill, output quality
 measurably degrades. A 200K context window effectively gives 80-120K
 tokens of useful capacity.
+
+**Done:** Compaction now triggers at 50% utilization instead of near the limit.
+**Remaining:** Subagent delegation, AST-aware repo map, pre-computed context.
 
 **What to build:**
 - Auto-compaction at 40% utilization, not at the limit

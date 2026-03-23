@@ -13,6 +13,9 @@ use crate::api::{
 
 /// Minimum bytes to prune before it's worth doing.
 const PRUNE_MINIMUM: usize = 20_000;
+/// Target utilization ratio — compact at 50% to maintain quality.
+/// Research shows output degrades beyond ~40% context utilization.
+const TARGET_UTILIZATION: f64 = 0.5;
 /// Protect the last N user turns from pruning.
 const PRUNE_PROTECT_TURNS: usize = 2;
 /// Buffer tokens before triggering compaction.
@@ -39,7 +42,8 @@ Which files were read or modified?";
 /// Check if we should trigger compaction based on token usage.
 pub fn should_compact(input_tokens: u32, model: &str) -> bool {
     let limit = crate::models::context_limit(model);
-    input_tokens > limit.saturating_sub(COMPACTION_BUFFER)
+    let target = (limit as f64 * TARGET_UTILIZATION) as u32;
+    input_tokens > target
 }
 
 /// Phase 1: Prune old tool outputs.
@@ -256,11 +260,11 @@ mod tests {
 
     #[test]
     fn test_should_compact() {
-        // claude-sonnet-4-6 has 1M context
-        assert!(!should_compact(100_000, "claude-sonnet-4-6"));
-        assert!(should_compact(990_000, "claude-sonnet-4-6"));
-        // Unknown model defaults to 200K
-        assert!(!should_compact(100_000, "unknown-model"));
-        assert!(should_compact(190_000, "unknown-model"));
+        // claude-sonnet-4-6 has 1M context, 50% target = 500K
+        assert!(!should_compact(400_000, "claude-sonnet-4-6"));
+        assert!(should_compact(600_000, "claude-sonnet-4-6"));
+        // Unknown model defaults to 200K, 50% = 100K
+        assert!(!should_compact(80_000, "unknown-model"));
+        assert!(should_compact(120_000, "unknown-model"));
     }
 }
