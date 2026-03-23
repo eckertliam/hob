@@ -77,10 +77,22 @@ When a tool needs permission, you'll see a prompt:
 | `/provider anthropic\|openai` | Set provider |
 | `/key anthropic\|openai <key>` | Save API key to config |
 | `/sessions` | List recent sessions |
+| `/resume <n>` | Resume session n from list |
+| `/theme [name]` | List or set color theme |
+| `/undo` | Revert file changes |
+| `/copy` | Copy last response to clipboard |
 | `/clear` | Clear chat history |
 | `/help` | Show available commands |
 
 Configuration is saved to `~/.config/hob/config.json`.
+
+### Themes
+
+7 built-in themes: default, dracula, nord, gruvbox, tokyonight, catppuccin, rosepine.
+
+```
+/theme dracula
+```
 
 ## Model selection
 
