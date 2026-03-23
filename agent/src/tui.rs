@@ -796,48 +796,59 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
     let chat_lines: Vec<Line> = app
         .chat
         .iter()
-        .map(|line| match line {
-            ChatLine::UserHeader => Line::from(Span::styled(
+        .flat_map(|line| match line {
+            ChatLine::UserHeader => vec![Line::from(Span::styled(
                 "You:",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
-            )),
-            ChatLine::UserText(text) => Line::from(text.as_str()),
-            ChatLine::AssistantHeader => Line::from(Span::styled(
+            ))],
+            ChatLine::UserText(text) => text
+                .lines()
+                .map(|l| Line::from(l.to_string()))
+                .collect(),
+            ChatLine::AssistantHeader => vec![Line::from(Span::styled(
                 "hob:",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
-            )),
-            ChatLine::AssistantText(text) => Line::from(text.as_str()),
-            ChatLine::ToolCall(tool) => Line::from(Span::styled(
+            ))],
+            ChatLine::AssistantText(text) => text
+                .lines()
+                .map(|l| Line::from(l.to_string()))
+                .collect(),
+            ChatLine::ToolCall(tool) => vec![Line::from(Span::styled(
                 format!("  ● {tool}"),
                 Style::default().fg(Color::Yellow),
-            )),
+            ))],
             ChatLine::ToolResult(output, is_error) => {
                 let color = if *is_error { Color::Red } else { Color::DarkGray };
-                Line::from(Span::styled(
+                vec![Line::from(Span::styled(
                     format!("  ✓ {output}"),
                     Style::default().fg(color),
-                ))
+                ))]
             }
-            ChatLine::Status(msg) => Line::from(Span::styled(
+            ChatLine::Status(msg) => vec![Line::from(Span::styled(
                 format!("  ⟳ {msg}"),
                 Style::default().fg(Color::Yellow),
-            )),
-            ChatLine::Error(msg) => Line::from(Span::styled(
+            ))],
+            ChatLine::Error(msg) => vec![Line::from(Span::styled(
                 format!("  ✗ {msg}"),
                 Style::default().fg(Color::Red),
-            )),
-            ChatLine::System(msg) => Line::from(Span::styled(
-                format!("  {msg}"),
-                Style::default().fg(Color::Blue),
-            )),
-            ChatLine::Separator => Line::from(Span::styled(
+            ))],
+            ChatLine::System(msg) => msg
+                .lines()
+                .map(|l| {
+                    Line::from(Span::styled(
+                        format!("  {l}"),
+                        Style::default().fg(Color::Blue),
+                    ))
+                })
+                .collect(),
+            ChatLine::Separator => vec![Line::from(Span::styled(
                 "─".repeat(f.area().width as usize),
                 Style::default().fg(Color::DarkGray),
-            )),
+            ))],
         })
         .collect();
 
