@@ -130,6 +130,62 @@ fn hash_path(path: &Path) -> String {
     format!("{:x}", hasher.finish())
 }
 
+/// Auto-checkpoint: commit changes to the user's git repo after tool execution.
+/// Only works if we're inside a git repo. Non-destructive — creates a new commit.
+pub fn auto_checkpoint(message: &str) -> Result<Option<String>> {
+    // Check if we're in a git repo
+    let status = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output();
+    match status {
+        Ok(out) if out.status.success() => {}
+        _ => return Ok(None), // not in a git repo, skip
+    }
+
+    // Check for changes
+    let diff = Command::new("git")
+        .args(["diff", "--stat", "HEAD"])
+        .output()
+        .context("git diff failed")?;
+    let diff_output = String::from_utf8_lossy(&diff.stdout);
+    if diff_output.trim().is_empty() {
+        // Also check untracked
+        let untracked = Command::new("git")
+            .args(["ls-files", "--others", "--exclude-standard"])
+            .output()
+            .context("git ls-files failed")?;
+        if String::from_utf8_lossy(&untracked.stdout).trim().is_empty() {
+            return Ok(None); // no changes
+        }
+    }
+
+    // Stage all changes
+    Command::new("git")
+        .args(["add", "-A"])
+        .output()
+        .context("git add failed")?;
+
+    // Commit
+    let commit_msg = format!("hob: {message}");
+    let output = Command::new("git")
+        .args(["commit", "-m", &commit_msg, "--no-verify"])
+        .output()
+        .context("git commit failed")?;
+
+    if output.status.success() {
+        // Get the commit hash
+        let hash = Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        info!("auto-checkpoint: {}", hash.as_deref().unwrap_or("unknown"));
+        Ok(hash)
+    } else {
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +261,45 @@ mod tests {
             .unwrap();
         let snaps = Snapshots::new(dir.path()).unwrap();
         assert!(snaps.git_dir.join("HEAD").exists());
+    }
+
+    #[test]
+    fn test_auto_checkpoint_no_changes() {
+        let dir = TempDir::new().unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        // Configure git user for the test repo
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        // Create initial commit
+        std::fs::write(dir.path().join("init.txt"), "init").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        // No changes — checkpoint should return None
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = auto_checkpoint("test");
+        std::env::set_current_dir(saved).unwrap();
+        assert!(result.unwrap().is_none());
     }
 }

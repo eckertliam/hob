@@ -120,7 +120,7 @@ Enable autonomous operation without per-step approval prompts. This is
 **Current state:** Permission system with wildcard rules and async ask
 flow. No OS-level enforcement.
 
-## Priority 7: Git-native operation with auto-checkpointing
+## Priority 7: Git-native operation with auto-checkpointing ✅
 
 Every edit step should create a git commit. This gives free rollback,
 free diff visualization, and a complete audit trail.

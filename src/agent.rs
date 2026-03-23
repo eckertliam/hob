@@ -272,10 +272,26 @@ pub async fn run_task(
                     });
                 }
 
+                let tool_names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
+
+                // Auto-checkpoint: commit file changes to git
+                if crate::lsp::modifies_files(&tool_names) {
+                    if let Ok(Some(hash)) = crate::snapshot::auto_checkpoint(
+                        &format!("step {step}: {}", tool_names.join(", ")),
+                    ) {
+                        ui.send(UiEvent::ToolResult {
+                            id: task_id.clone(),
+                            tool: "checkpoint".into(),
+                            output: format!("committed: {hash}"),
+                            is_error: false,
+                        })
+                        .await;
+                    }
+                }
+
                 // Compiler-in-the-loop: if any tools modified files, run a
                 // build check and inject diagnostics so the agent can fix
                 // errors in the same turn.
-                let tool_names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
                 if crate::lsp::modifies_files(&tool_names) {
                     let (build_ok, diags) = crate::lsp::check_project();
                     if !build_ok && !diags.is_empty() {
