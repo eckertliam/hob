@@ -6,6 +6,8 @@ hob is a terminal AI coding agent. Single Rust binary with a ratatui TUI.
 
 Standard Rust project layout: `Cargo.toml` at root, source in `src/`.
 `research/` has architecture reference docs from OpenCode.
+`PLAN.md` has the architectural roadmap — prioritized list of what to
+build next and why. Read it before starting major new work.
 
 ## Build & test
 
