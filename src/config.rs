@@ -28,6 +28,23 @@ pub struct Config {
     /// Theme name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    /// Custom keybindings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keybindings: Option<KeyBindings>,
+}
+
+/// Customizable key bindings. Values are key descriptions like "ctrl+x", "alt+m".
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KeyBindings {
+    /// Leader key for chord sequences. Default: "ctrl+x".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leader: Option<String>,
+    /// Submit input. Default: "enter".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submit: Option<String>,
+    /// Cancel task. Default: "escape".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<String>,
 }
 
 impl Config {
@@ -127,6 +144,7 @@ mod tests {
             openai_api_key: None,
             openai_base_url: None,
             theme: None,
+            keybindings: None,
         };
 
         // Save manually to test path

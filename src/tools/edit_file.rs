@@ -56,7 +56,18 @@ pub async fn execute(input: Value) -> Result<String> {
         .await
         .with_context(|| format!("failed to write file: {}", params.path))?;
 
-    Ok(format!("Edited {} (matched via {method})\n\n{diff}", params.path))
+    let mut output = format!("Edited {} (matched via {method})\n\n{diff}", params.path);
+
+    // Run diagnostics
+    let diags = crate::lsp::check_file(&params.path);
+    if !diags.is_empty() {
+        output.push_str("\n\nDiagnostics:\n");
+        for d in &diags {
+            output.push_str(&format!("  {d}\n"));
+        }
+    }
+
+    Ok(output)
 }
 
 /// Try to apply the edit using a cascade of matching strategies.

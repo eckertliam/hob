@@ -53,10 +53,17 @@ pub async fn execute(input: Value) -> Result<String> {
         .with_context(|| format!("failed to write file: {}", params.path))?;
 
     let lines = params.content.lines().count();
-    Ok(format!(
-        "Wrote {} lines to {}",
-        lines, params.path
-    ))
+    let mut output = format!("Wrote {} lines to {}", lines, params.path);
+
+    let diags = crate::lsp::check_file(&params.path);
+    if !diags.is_empty() {
+        output.push_str("\n\nDiagnostics:\n");
+        for d in &diags {
+            output.push_str(&format!("  {d}\n"));
+        }
+    }
+
+    Ok(output)
 }
 
 #[cfg(test)]

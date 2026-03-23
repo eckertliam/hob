@@ -4,6 +4,8 @@ mod compaction;
 mod config;
 mod error;
 mod events;
+mod highlight;
+mod lsp;
 mod models;
 mod permission;
 mod prompt;

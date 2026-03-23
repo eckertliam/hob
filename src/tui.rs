@@ -82,6 +82,8 @@ struct App {
     store: Store,
     /// Current theme name.
     theme_name: String,
+    /// True when Ctrl+X was pressed and we're waiting for the second key.
+    leader_pending: bool,
 }
 
 impl App {
@@ -106,6 +108,7 @@ impl App {
                 .ok()
                 .and_then(|c| c.theme)
                 .unwrap_or_else(|| "default".into()),
+            leader_pending: false,
         }
     }
 
@@ -657,6 +660,84 @@ async fn run_ui_loop(
                         continue;
                     }
 
+                    // Leader key chord: Ctrl+X then second key
+                    if app.leader_pending {
+                        app.leader_pending = false;
+                        match key.code {
+                            KeyCode::Char('n') => {
+                                // New chat
+                                app.chat.clear();
+                                app.total_input_tokens = 0;
+                                app.total_output_tokens = 0;
+                            }
+                            KeyCode::Char('l') => {
+                                // List sessions
+                                app.input = "/sessions".into();
+                                app.cursor = app.input.len();
+                                // Trigger enter
+                                let input = app.input.trim().to_string();
+                                app.input.clear();
+                                app.cursor = 0;
+                                app.following = true;
+                                app.handle_command(&input).await;
+                            }
+                            KeyCode::Char('m') => {
+                                // Model list
+                                app.show_model_list();
+                            }
+                            KeyCode::Char('t') => {
+                                // Theme list
+                                let names = crate::theme::list_names();
+                                let mut text = String::from("Themes:\n");
+                                for name in &names {
+                                    let cur = if *name == app.theme_name { " ←" } else { "" };
+                                    text.push_str(&format!("  {name}{cur}\n"));
+                                }
+                                app.chat.push(ChatLine::System(text));
+                            }
+                            KeyCode::Char('y') => {
+                                // Copy last response
+                                let last_text: Option<String> = app.chat.iter().rev().find_map(|line| {
+                                    if let ChatLine::AssistantText(text) = line { Some(text.clone()) } else { None }
+                                });
+                                if let Some(text) = last_text {
+                                    if let Err(e) = copy_to_clipboard(&text) {
+                                        app.chat.push(ChatLine::System(format!("Copy failed: {e}")));
+                                    } else {
+                                        app.chat.push(ChatLine::System("Copied.".into()));
+                                    }
+                                }
+                            }
+                            KeyCode::Char('q') => {
+                                return Ok(());
+                            }
+                            KeyCode::Char('h') | KeyCode::Char('?') => {
+                                app.chat.push(ChatLine::System(
+                                    "Leader chords (Ctrl+X then):\n  \
+                                     n — new chat\n  \
+                                     l — list sessions\n  \
+                                     m — model list\n  \
+                                     t — theme list\n  \
+                                     y — copy response\n  \
+                                     q — quit\n  \
+                                     h — this help".into(),
+                                ));
+                            }
+                            _ => {
+                                app.chat.push(ChatLine::System(
+                                    "Unknown chord. Ctrl+X h for help.".into(),
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Ctrl+X: start leader chord
+                    if key.code == KeyCode::Char('x') && key.modifiers == KeyModifiers::CONTROL {
+                        app.leader_pending = true;
+                        continue;
+                    }
+
                     match key {
                         // Escape: cancel current task
                         KeyEvent {
@@ -1151,10 +1232,9 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
                     .fg(theme.assistant_header)
                     .add_modifier(Modifier::BOLD),
             ))],
-            ChatLine::AssistantText(text) => text
-                .lines()
-                .map(|l| Line::from(l.to_string()))
-                .collect(),
+            ChatLine::AssistantText(text) => {
+                crate::highlight::render_with_highlights(text)
+            }
             ChatLine::ToolCall(tool) => vec![Line::from(Span::styled(
                 format!("  ● {tool}"),
                 Style::default().fg(theme.tool),

@@ -138,6 +138,78 @@ pub fn list_names() -> Vec<&'static str> {
     THEMES.iter().map(|t| t.name).collect()
 }
 
+/// Detect terminal background color via OSC 11 query.
+/// Returns true for dark, false for light. Defaults to dark on failure.
+pub fn detect_dark_background() -> bool {
+    use std::io::{Read, Write};
+
+    // Send OSC 11 query: request background color
+    let mut stdout = std::io::stdout();
+    if write!(stdout, "\x1b]11;?\x07").is_err() || stdout.flush().is_err() {
+        return true; // default dark
+    }
+
+    // Try to read the response with a short timeout
+    // Response format: \x1b]11;rgb:RRRR/GGGG/BBBB\x07
+    let mut stdin = std::io::stdin();
+
+    // Set a very short deadline — we can't block the TUI startup
+    // Use a non-blocking approach: put stdin in raw mode temporarily
+    // and poll for data. If no response in 100ms, assume dark.
+    let mut buf = [0u8; 64];
+    let mut collected = Vec::new();
+
+    // We're already in raw mode from crossterm when this is called,
+    // so stdin should be non-blocking enough with a poll
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+    while std::time::Instant::now() < deadline {
+        if crossterm::event::poll(std::time::Duration::from_millis(10)).unwrap_or(false) {
+            if let Ok(n) = stdin.read(&mut buf) {
+                collected.extend_from_slice(&buf[..n]);
+                let s = String::from_utf8_lossy(&collected);
+                if s.contains("\x07") || s.contains("\x1b\\") {
+                    break;
+                }
+            }
+        }
+    }
+
+    let response = String::from_utf8_lossy(&collected);
+    parse_osc11_luminance(&response)
+        .map(|lum| lum < 0.5) // dark if luminance < 50%
+        .unwrap_or(true) // default dark
+}
+
+/// Parse luminance from an OSC 11 response.
+/// Format: \x1b]11;rgb:RRRR/GGGG/BBBB\x07
+fn parse_osc11_luminance(response: &str) -> Option<f64> {
+    let rgb_start = response.find("rgb:")?;
+    let rgb = &response[rgb_start + 4..];
+    let parts: Vec<&str> = rgb.split(|c| c == '/' || c == '\x07' || c == '\x1b')
+        .take(3)
+        .collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    // Values are hex, 2 or 4 digits each
+    let r = u32::from_str_radix(parts[0], 16).ok()? as f64;
+    let g = u32::from_str_radix(parts[1], 16).ok()? as f64;
+    let b = u32::from_str_radix(parts[2], 16).ok()? as f64;
+    // Normalize: if 4-digit hex, max is 0xFFFF; if 2-digit, max is 0xFF
+    let max_val = if parts[0].len() > 2 { 65535.0 } else { 255.0 };
+    // Relative luminance (ITU-R BT.709)
+    Some(0.2126 * (r / max_val) + 0.7152 * (g / max_val) + 0.0722 * (b / max_val))
+}
+
+/// Pick a default theme based on terminal background.
+pub fn auto_theme() -> &'static str {
+    if detect_dark_background() {
+        "default" // already dark-friendly
+    } else {
+        "default" // TODO: add a light theme variant
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +233,26 @@ mod tests {
         assert!(names.contains(&"dracula"));
         assert!(names.contains(&"nord"));
         assert!(names.len() >= 7);
+    }
+
+    #[test]
+    fn test_parse_osc11_dark() {
+        // Dark background: rgb:0000/0000/0000
+        let lum = parse_osc11_luminance("\x1b]11;rgb:0000/0000/0000\x07");
+        assert!(lum.is_some());
+        assert!(lum.unwrap() < 0.5);
+    }
+
+    #[test]
+    fn test_parse_osc11_light() {
+        // Light background: rgb:FFFF/FFFF/FFFF
+        let lum = parse_osc11_luminance("\x1b]11;rgb:FFFF/FFFF/FFFF\x07");
+        assert!(lum.is_some());
+        assert!(lum.unwrap() > 0.5);
+    }
+
+    #[test]
+    fn test_parse_osc11_invalid() {
+        assert!(parse_osc11_luminance("garbage").is_none());
     }
 }
