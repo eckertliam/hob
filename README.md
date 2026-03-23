@@ -11,10 +11,15 @@ tool execution, permission gating, and context compaction.
 ## Installation
 
 ```bash
+cargo install --git https://github.com/eckertliam/hob.git
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/eckertliam/hob.git
 cd hob
-make build
-make install  # copies to ~/.local/bin/
+cargo install --path .
 ```
 
 ## API key setup
@@ -31,6 +36,13 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ```bash
 export OPENAI_API_KEY="sk-..."
+```
+
+Or set keys from within hob:
+
+```
+/key anthropic sk-ant-...
+/key openai sk-...
 ```
 
 hob auto-detects the provider from whichever key is set. If both are set,
@@ -63,6 +75,7 @@ Type your prompt, press `Enter`.
 | `Ctrl+A` / `Ctrl+E` | Beginning / end of input |
 | `Ctrl+U` | Clear input |
 | `Ctrl+W` | Delete word backwards |
+| `Ctrl+Y` | Copy last response to clipboard |
 | `Ctrl+L` | Redraw screen |
 | `Tab` | Complete slash command |
 
@@ -115,13 +128,13 @@ export HOB_MODEL="gpt-5.3-codex"              # coding-optimized
 ```bash
 git clone https://github.com/eckertliam/hob.git
 cd hob
-cargo run --release --manifest-path agent/Cargo.toml
+cargo run --release
 ```
 
 Tests:
 
 ```bash
-cargo test --manifest-path agent/Cargo.toml
+cargo test
 ```
 
 ## Project instructions

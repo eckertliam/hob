@@ -1,7 +1,4 @@
-# Rust
-agent/target/
-
-# Editor
+/target/
 .DS_Store
 *~
 \#*\#
