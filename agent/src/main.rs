@@ -9,6 +9,7 @@ mod permission;
 mod prompt;
 mod snapshot;
 mod store;
+mod theme;
 mod tools;
 mod tui;
 

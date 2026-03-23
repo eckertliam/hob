@@ -80,6 +80,8 @@ struct App {
     total_output_tokens: u32,
     /// Store reference for session commands.
     store: Store,
+    /// Current theme name.
+    theme_name: String,
 }
 
 impl App {
@@ -100,6 +102,10 @@ impl App {
             total_input_tokens: 0,
             total_output_tokens: 0,
             store,
+            theme_name: crate::config::Config::load()
+                .ok()
+                .and_then(|c| c.theme)
+                .unwrap_or_else(|| "default".into()),
         }
     }
 
@@ -326,6 +332,34 @@ impl App {
                 }
                 true
             }
+            Some("/theme") => {
+                if let Some(name) = parts.get(1) {
+                    let names = crate::theme::list_names();
+                    if names.contains(name) {
+                        self.theme_name = name.to_string();
+                        if let Ok(mut cfg) = crate::config::Config::load() {
+                            cfg.theme = Some(name.to_string());
+                            let _ = cfg.save();
+                        }
+                        self.chat.push(ChatLine::System(format!("Theme set to {name}.")));
+                    } else {
+                        self.chat.push(ChatLine::System(format!(
+                            "Unknown theme. Available: {}",
+                            names.join(", ")
+                        )));
+                    }
+                } else {
+                    let names = crate::theme::list_names();
+                    let mut text = String::from("Available themes:\n");
+                    for name in &names {
+                        let current = if *name == self.theme_name { " ← current" } else { "" };
+                        text.push_str(&format!("  {name}{current}\n"));
+                    }
+                    text.push_str("\n  Usage: /theme <name>");
+                    self.chat.push(ChatLine::System(text));
+                }
+                true
+            }
             Some("/undo") => {
                 match crate::snapshot::Snapshots::new(
                     &std::env::current_dir().unwrap_or_default(),
@@ -376,6 +410,7 @@ impl App {
                      /key anthropic|openai <key> — save API key\n  \
                      /sessions                — list recent sessions\n  \
                      /resume <n>              — resume session n from /sessions\n  \
+                     /theme [name]            — show or set theme\n  \
                      /undo                    — revert file changes\n  \
                      /copy                    — copy last response to clipboard\n  \
                      /clear                   — clear chat history\n  \
@@ -836,7 +871,7 @@ async fn run_ui_loop(
                             if app.input.starts_with('/') {
                                 let commands = [
                                     "/model", "/provider", "/key", "/sessions",
-                                    "/resume", "/undo", "/copy", "/clear", "/help",
+                                    "/resume", "/theme", "/undo", "/copy", "/clear", "/help",
                                 ];
                                 let matches: Vec<&&str> = commands
                                     .iter()
@@ -1081,6 +1116,7 @@ fn format_tokens(n: u32) -> String {
 
 /// Draw the UI.
 fn draw(f: &mut ratatui::Frame, app: &App) {
+    let theme = crate::theme::get(&app.theme_name);
     // Input area grows with content (min 3, max 10)
     let input_lines = app.input.lines().count().max(1) as u16 + 2; // +2 for border
     let input_height = input_lines.clamp(3, 10);
@@ -1102,7 +1138,7 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
             ChatLine::UserHeader => vec![Line::from(Span::styled(
                 "You:",
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(theme.user_header)
                     .add_modifier(Modifier::BOLD),
             ))],
             ChatLine::UserText(text) => text
@@ -1112,7 +1148,7 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
             ChatLine::AssistantHeader => vec![Line::from(Span::styled(
                 "hob:",
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme.assistant_header)
                     .add_modifier(Modifier::BOLD),
             ))],
             ChatLine::AssistantText(text) => text
@@ -1121,10 +1157,10 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
                 .collect(),
             ChatLine::ToolCall(tool) => vec![Line::from(Span::styled(
                 format!("  ● {tool}"),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme.tool),
             ))],
             ChatLine::ToolResult(output, is_error) => {
-                let color = if *is_error { Color::Red } else { Color::DarkGray };
+                let color = if *is_error { theme.error } else { theme.tool_result };
                 vec![Line::from(Span::styled(
                     format!("  ✓ {output}"),
                     Style::default().fg(color),
@@ -1132,18 +1168,18 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
             }
             ChatLine::Status(msg) => vec![Line::from(Span::styled(
                 format!("  ⟳ {msg}"),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme.status),
             ))],
             ChatLine::Error(msg) => vec![Line::from(Span::styled(
                 format!("  ✗ {msg}"),
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme.error),
             ))],
             ChatLine::System(msg) => msg
                 .lines()
                 .map(|l| {
                     Line::from(Span::styled(
                         format!("  {l}"),
-                        Style::default().fg(Color::Blue),
+                        Style::default().fg(theme.system),
                     ))
                 })
                 .collect(),
@@ -1192,10 +1228,10 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
         format!(" {cwd}  hob:{}{}{branch}  model:{}  /help ", app.status, tokens, app.model)
     };
     let status_style = match app.status.as_str() {
-        "idle" => Style::default().fg(Color::DarkGray).bg(Color::Black),
-        "streaming" => Style::default().fg(Color::Green).bg(Color::Black),
-        "permission?" => Style::default().fg(Color::Yellow).bg(Color::Black),
-        _ => Style::default().fg(Color::Yellow).bg(Color::Black),
+        "idle" => Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg),
+        "streaming" => Style::default().fg(theme.assistant_header).bg(theme.status_bar_bg),
+        "permission?" => Style::default().fg(theme.status).bg(theme.status_bar_bg),
+        _ => Style::default().fg(theme.status).bg(theme.status_bar_bg),
     };
     let status = Paragraph::new(status_text).style(status_style);
     f.render_widget(status, chunks[1]);
@@ -1212,10 +1248,10 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::TOP)
-                .border_style(Style::default().fg(Color::DarkGray))
+                .border_style(Style::default().fg(theme.input_border))
                 .title(input_title),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(theme.input_text));
     f.render_widget(input, chunks[2]);
 
     // Place cursor
