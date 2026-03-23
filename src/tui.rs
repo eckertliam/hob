@@ -1148,10 +1148,14 @@ async fn run_ui_loop(
                 UiEvent::Done { input_tokens, output_tokens, .. } => {
                     app.total_input_tokens += input_tokens;
                     app.total_output_tokens += output_tokens;
+                    let cost = crate::models::calculate_cost(
+                        &app.model, input_tokens, output_tokens,
+                    );
                     app.chat.push(ChatLine::System(format!(
-                        "tokens: {}in / {}out",
+                        "tokens: {}in / {}out  cost: {}",
                         format_tokens(input_tokens),
                         format_tokens(output_tokens),
+                        crate::models::format_cost(cost),
                     )));
                     app.chat.push(ChatLine::Separator);
                     app.current_task = None;
@@ -1343,10 +1347,16 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
         )
     } else {
         let tokens = if app.total_input_tokens > 0 {
+            let total_cost = crate::models::calculate_cost(
+                &app.model,
+                app.total_input_tokens,
+                app.total_output_tokens,
+            );
             format!(
-                "  {}in/{}out",
+                "  {}in/{}out {}",
                 format_tokens(app.total_input_tokens),
                 format_tokens(app.total_output_tokens),
+                crate::models::format_cost(total_cost),
             )
         } else {
             String::new()

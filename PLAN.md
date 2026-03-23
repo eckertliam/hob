@@ -135,7 +135,7 @@ free diff visualization, and a complete audit trail.
 **Current state:** Snapshot system using a separate git repo. Not
 commit-based, not visible in the TUI as diffs.
 
-## Priority 8: Transparent cost tracking
+## Priority 8: Transparent cost tracking ✅
 
 Display real-time USD cost in the UI. Address the most emotionally
 charged user complaint (cost opacity).

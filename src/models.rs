@@ -17,6 +17,10 @@ pub struct ModelInfo {
     pub context: u32,
     /// Max output tokens.
     pub max_output: u32,
+    /// Cost per million input tokens (USD).
+    pub cost_input: f64,
+    /// Cost per million output tokens (USD).
+    pub cost_output: f64,
 }
 
 /// All known models.
@@ -28,6 +32,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "anthropic",
         context: 1_000_000,
         max_output: 128_000,
+        cost_input: 5.0,
+        cost_output: 25.0,
     },
     ModelInfo {
         id: "claude-sonnet-4-6",
@@ -35,6 +41,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "anthropic",
         context: 1_000_000,
         max_output: 64_000,
+        cost_input: 3.0,
+        cost_output: 15.0,
     },
     ModelInfo {
         id: "claude-haiku-4-5-20251001",
@@ -42,6 +50,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "anthropic",
         context: 200_000,
         max_output: 64_000,
+        cost_input: 1.0,
+        cost_output: 5.0,
     },
     // Legacy Anthropic
     ModelInfo {
@@ -50,6 +60,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "anthropic",
         context: 1_000_000,
         max_output: 64_000,
+        cost_input: 3.0,
+        cost_output: 15.0,
     },
     ModelInfo {
         id: "claude-opus-4-5-20251101",
@@ -57,6 +69,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "anthropic",
         context: 200_000,
         max_output: 64_000,
+        cost_input: 5.0,
+        cost_output: 25.0,
     },
     ModelInfo {
         id: "claude-sonnet-4-20250514",
@@ -64,6 +78,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "anthropic",
         context: 200_000,
         max_output: 64_000,
+        cost_input: 3.0,
+        cost_output: 15.0,
     },
     ModelInfo {
         id: "claude-opus-4-20250514",
@@ -71,6 +87,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "anthropic",
         context: 200_000,
         max_output: 32_000,
+        cost_input: 5.0,
+        cost_output: 25.0,
     },
     // ── OpenAI ─────────────────────────────────────────────────
     ModelInfo {
@@ -79,6 +97,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "openai",
         context: 1_050_000,
         max_output: 100_000,
+        cost_input: 2.5,
+        cost_output: 15.0,
     },
     ModelInfo {
         id: "gpt-5.4-mini",
@@ -86,6 +106,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "openai",
         context: 1_050_000,
         max_output: 64_000,
+        cost_input: 0.75,
+        cost_output: 4.5,
     },
     ModelInfo {
         id: "gpt-5.4-thinking",
@@ -93,6 +115,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "openai",
         context: 1_050_000,
         max_output: 100_000,
+        cost_input: 2.5,
+        cost_output: 15.0,
     },
     ModelInfo {
         id: "gpt-5.3-codex",
@@ -100,6 +124,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "openai",
         context: 1_050_000,
         max_output: 100_000,
+        cost_input: 1.75,
+        cost_output: 14.0,
     },
     ModelInfo {
         id: "o3-mini",
@@ -107,6 +133,8 @@ pub const MODELS: &[ModelInfo] = &[
         provider: "openai",
         context: 200_000,
         max_output: 100_000,
+        cost_input: 1.10,
+        cost_output: 4.40,
     },
 ];
 
@@ -128,6 +156,24 @@ pub fn context_limit(model_id: &str) -> u32 {
 /// Falls back to 16K for unknown models.
 pub fn max_output(model_id: &str) -> u32 {
     lookup(model_id).map(|m| m.max_output).unwrap_or(16_384)
+}
+
+/// Calculate USD cost for token usage.
+pub fn calculate_cost(model_id: &str, input_tokens: u32, output_tokens: u32) -> f64 {
+    let info = lookup(model_id);
+    let (ci, co) = info
+        .map(|m| (m.cost_input, m.cost_output))
+        .unwrap_or((3.0, 15.0)); // default to Sonnet pricing
+    (input_tokens as f64 / 1_000_000.0) * ci + (output_tokens as f64 / 1_000_000.0) * co
+}
+
+/// Format a USD cost for display.
+pub fn format_cost(cost: f64) -> String {
+    if cost < 0.01 {
+        format!("${:.4}", cost)
+    } else {
+        format!("${:.2}", cost)
+    }
 }
 
 /// Infer provider from model ID.
@@ -216,5 +262,33 @@ mod tests {
     fn test_max_output_known() {
         assert_eq!(max_output("claude-opus-4-6"), 128_000);
         assert_eq!(max_output("gpt-5.4-mini"), 64_000);
+    }
+
+    #[test]
+    fn test_calculate_cost_sonnet() {
+        // 1M input tokens at $3/M + 1M output at $15/M = $18
+        let cost = calculate_cost("claude-sonnet-4-6", 1_000_000, 1_000_000);
+        assert!((cost - 18.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_calculate_cost_small_usage() {
+        // 10K input at $3/M + 1K output at $15/M
+        let cost = calculate_cost("claude-sonnet-4-6", 10_000, 1_000);
+        assert!((cost - 0.045).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_calculate_cost_unknown_model() {
+        // Falls back to Sonnet pricing
+        let cost = calculate_cost("unknown-model", 1_000_000, 1_000_000);
+        assert!((cost - 18.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_format_cost() {
+        assert_eq!(format_cost(0.045), "$0.04");
+        assert_eq!(format_cost(1.50), "$1.50");
+        assert_eq!(format_cost(0.001), "$0.0010");
     }
 }
