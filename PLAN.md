@@ -49,7 +49,7 @@ No shipping agent has robust detection or per-subtask budget enforcement.
 
 **Current state:** Not implemented.
 
-## Priority 3: Multi-sample with verifier
+## Priority 3: Multi-sample with verifier ✅
 
 For complex tasks, sample N solutions in parallel and select the best
 one using a compiler-based verifier. DeepSWE goes from 42% pass@1 to

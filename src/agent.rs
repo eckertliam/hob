@@ -31,6 +31,94 @@ struct PendingToolCall {
     args_json: String,
 }
 
+/// Number of attempts for multi-sample mode.
+const MULTI_SAMPLE_N: usize = 3;
+
+/// Run a task with multi-sample verification.
+/// Runs the task N times and picks the first attempt where the build passes.
+pub async fn run_task_multi_sample(
+    provider: &dyn Provider,
+    model: &str,
+    task_id: String,
+    prompt: String,
+    image: Option<(String, String)>,
+    cancel: CancellationToken,
+    store: &Store,
+    pending_permissions: &PendingMap,
+    ui: &EventSender,
+) -> Result<()> {
+    use crate::snapshot::auto_checkpoint;
+
+    // Take a snapshot before we start
+    let initial_hash = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    for attempt in 1..=MULTI_SAMPLE_N {
+        ui.send(UiEvent::Status {
+            id: task_id.clone(),
+            message: format!("attempt {attempt}/{MULTI_SAMPLE_N}"),
+        })
+        .await;
+
+        // Reset to initial state if not first attempt
+        if attempt > 1 {
+            if let Some(ref hash) = initial_hash {
+                let _ = std::process::Command::new("git")
+                    .args(["checkout", hash, "--", "."])
+                    .output();
+            }
+        }
+
+        // Run the task
+        let sub_id = format!("{task_id}-attempt-{attempt}");
+        run_task(
+            provider,
+            model,
+            sub_id,
+            prompt.clone(),
+            image.clone(),
+            false, // act mode
+            cancel.clone(),
+            store,
+            pending_permissions,
+            ui,
+        )
+        .await?;
+
+        // Check if the build passes
+        let (build_ok, _diags) = crate::lsp::check_project();
+        if build_ok {
+            ui.send(UiEvent::Status {
+                id: task_id.clone(),
+                message: format!("attempt {attempt} passed build check"),
+            })
+            .await;
+            return Ok(());
+        }
+
+        if attempt < MULTI_SAMPLE_N {
+            ui.send(UiEvent::Status {
+                id: task_id.clone(),
+                message: format!("attempt {attempt} failed build, trying again..."),
+            })
+            .await;
+        }
+    }
+
+    // All attempts failed — keep the last one
+    ui.send(UiEvent::Status {
+        id: task_id.clone(),
+        message: format!("all {MULTI_SAMPLE_N} attempts failed build check"),
+    })
+    .await;
+
+    Ok(())
+}
+
 /// Run a single agent task to completion, sending events to the TUI.
 pub async fn run_task(
     provider: &dyn Provider,

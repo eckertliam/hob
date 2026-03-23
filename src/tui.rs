@@ -88,6 +88,8 @@ struct App {
     pending_image: Option<(String, String)>,
     /// Whether the next task should run in plan (read-only) mode.
     plan_mode: bool,
+    /// Whether the next task should use multi-sample with verifier.
+    multi_sample: bool,
 }
 
 impl App {
@@ -115,6 +117,7 @@ impl App {
             leader_pending: false,
             pending_image: None,
             plan_mode: false,
+            multi_sample: false,
         }
     }
 
@@ -369,6 +372,19 @@ impl App {
                 }
                 true
             }
+            Some("/hard") => {
+                self.multi_sample = !self.multi_sample;
+                if self.multi_sample {
+                    self.chat.push(ChatLine::System(
+                        "Hard mode ON: next task will try 3 attempts, picking the one that passes the build.".into(),
+                    ));
+                } else {
+                    self.chat.push(ChatLine::System(
+                        "Hard mode OFF: single attempt.".into(),
+                    ));
+                }
+                true
+            }
             Some("/plan") => {
                 self.plan_mode = true;
                 self.chat.push(ChatLine::System(
@@ -465,6 +481,7 @@ impl App {
                      /key anthropic|openai <key> — save API key\n  \
                      /sessions                — list recent sessions\n  \
                      /resume <n>              — resume session n from /sessions\n  \
+                     /hard                    — toggle multi-sample mode (3 attempts)\n  \
                      /plan                    — switch to read-only plan mode\n  \
                      /act                     — switch to full execution mode\n  \
                      /image <path>            — attach image to next prompt\n  \
@@ -604,7 +621,7 @@ fn spawn_agent_handler(
 
         while let Some(action) = action_rx.0.recv().await {
             match action {
-                UserAction::Task { id, prompt, image, plan_mode } => {
+                UserAction::Task { id, prompt, image, plan_mode, multi_sample } => {
                     let token = CancellationToken::new();
                     cancel = Some(token.clone());
 
@@ -615,11 +632,18 @@ fn spawn_agent_handler(
                     let u = ui.clone();
 
                     tokio::spawn(async move {
-                        if let Err(e) = crate::agent::run_task(
-                            &*p, &m, id.clone(), prompt, image, plan_mode, token, &s, &pp, &u,
-                        )
-                        .await
-                        {
+                        let result = if multi_sample {
+                            crate::agent::run_task_multi_sample(
+                                &*p, &m, id.clone(), prompt, image, token, &s, &pp, &u,
+                            )
+                            .await
+                        } else {
+                            crate::agent::run_task(
+                                &*p, &m, id.clone(), prompt, image, plan_mode, token, &s, &pp, &u,
+                            )
+                            .await
+                        };
+                        if let Err(e) = result {
                             u.send(UiEvent::Error {
                                 id,
                                 message: format!("{e:#}"),
@@ -859,6 +883,7 @@ async fn run_ui_loop(
                                             prompt: input,
                                             image: app.pending_image.take(),
                                             plan_mode: app.plan_mode,
+                                            multi_sample: app.multi_sample,
                                         })
                                         .await;
                                 }
@@ -1012,7 +1037,7 @@ async fn run_ui_loop(
                             if app.input.starts_with('/') {
                                 let commands = [
                                     "/model", "/provider", "/key", "/sessions",
-                                    "/plan", "/act", "/resume", "/image", "/theme", "/undo", "/copy", "/clear", "/help",
+                                    "/hard", "/plan", "/act", "/resume", "/image", "/theme", "/undo", "/copy", "/clear", "/help",
                                 ];
                                 let matches: Vec<&&str> = commands
                                     .iter()
